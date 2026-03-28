@@ -1,0 +1,62 @@
+ARTURO
+MARTÍNEZ
+Software Engineer | .NET · C# · Azure · ETL/ELT · API Integrations · Gen AI & Agentic Workflows
+
+Summary
+
+Arturo is a Senior Software Engineer (.NET / React / Angular) specializing in Cloud-native architectures, CI/CD automation, Agentic AI integration, and enterprise-grade API development. With 16+ years of expertise in .NET Core, C#, Azure, Microservices, REST APIs, and Clean Architecture, and hands-on experience integrating Generative AI and LLMs — including Azure OpenAI, Anthropic Claude, Semantic Kernel, Ollama, and GitHub Copilot — into production workflows and agentic automation pipelines. Proficient in Power BI, SSRS, and ETL/ELT pipelines, driving high-concurrency, cross-functional Agile delivery with measurable business impact.
+
+Technical Skills
+
+•	C# / .NET Core / .NET 8+
+•	SQL Server / MongoDB / Redis / ETL
+•	React / Angular / Blazor	•	Gen AI / Agentic AI / LLM / Anthropic
+•	REST API / Microservices / CI/CD
+•	Azure Cloud / Docker / DevOps
+
+Experience
+
+SR Full Stack Developer - 08/2024 -  01/2026
+EVOLUTION CODE IO, Medellín – Colombia  
+•	Architected Cloud-native Azure solutions with automated CI/CD pipelines, Telerik Blazor UI, .NET 8 legacy modernization, React, Angular, C#; designed and shipped enterprise features with cross-functional Agile/Scrum teams under Clean Architecture and Microservices principles.
+•	Built agentic AI-driven automation for data ingestion and vendor-mapping workflows using Azure Functions, Semantic Kernel orchestration, and LLM-powered transformation logic; reduced manual integration effort across multi-tenant environments.
+
+Associate Software Engineer .Net  - 08/2021 – 08/2024 (3 Years)
+YUXI GLOBAL, Medellín – Colombia  
+•	Azure DevOps. Azure Service Bus, Functions. Cloud-native CI/CD, RESTful API integrations, Microservices C#, .NET ETL/ELT pipelines, multi-vendor data ingestion, API authentication (OAuth, API keys), Git Strategy. 
+•	AI-assisted development workflows using GitHub Copilot, Azure Cognitive Services, OpenAI API, and Power Automate for pipeline orchestration.
+•	Configuration-driven architecture (feature flags, JSON/YAML mappings), CQRS, Entity Framework, Redis caching, SSRS, Power BI, Big Data Analytical Projects.
+
+.Net Developer Tech Lead  - 03/2020 – 08/2021 (2 years)
+GLOBANT, Medellín – Colombia  (1 Year)
+•	Led backend API architecture and design in C#, ASP.NET MVC, Entity Framework, TSQL; enforced SOLID and Clean Architecture.
+•	Built ETL data pipelines and REST API integrations with OAuth/API-key auth across Azure Suite (Functions, Service Bus, DevOps).
+•	Mentored developers in Agile POD (SCRUM, KANBAN); delivered Power BI dashboards and config-driven multi-tenant solutions.
+
+Reporting Coordinator - 02/2019 – 03/2020  (1 Year)
+TELEPERFORMANCE, Medellín - Colombia
+•	Architected end-to-end ETL/ELT pipelines using SSIS; designed .NET integration interfaces for multi-source data ingestion, Integration SOAP with Oracle PBX Strategy.
+•	Built complete Power BI solutions and SSRS reporting suites; parsed and normalized CSV, Excel, XML into standardized schemas.
+•	Performed Transact SQL (T-SQL) with hands-on troubleshooting complex stored –procedures, functions. 
+
+Senior Software Developer - 08/2017 – 01/2019  (2 Years)
+Freelance / Independent Contractor, Berlin – Germany  /  Barcelona - Spain
+•	Write, modify, integrate, and test software code (.Net VB Forms 4E CMS). IIS Deployments, API Integrations
+•	Develop custom features, Integration with SQL databases, Ecommerce Site and shopping processes.
+•	Performed and led technical design and development of complex application systems. 
+
+Software Developer Coordinator - 08/2012 – 07/2017  (5 Years)
+GRUPO EXITO, Medellín - Colombia
+•	Built and maintained ETL/data integration pipelines and batch processing jobs for enterprise retail data across SQL Server data models and management systems.
+•	Coordinated cross-team delivery of internal applications (SI2 VB Forms); defined workflows, data mappings, and SFTP-based file ingestion processes.
+•	Designed and optimized database architecture, stored procedures, and indexing strategies supporting high-volume transactional systems.
+
+Education
+Microsoft Certified: Power BI Data Analyst Associate
+https://learn.microsoft.com/api/credentials/share/en-us/ArturoMartinez-8261/50814ADAED58AE2C?sharingId=6C2FF9BF443A30D
+
+Microsoft Certified: Azure Fundamentals
+https://learn.microsoft.com/api/credentials/share/en-us/ArturoMartinez-8261/DAFD92512AE5FBDE?sharingId
+
+GIT
+https://globant.acamica.com/cert/6c0762d141fd7688deb9320816bf3535079e4c3d
