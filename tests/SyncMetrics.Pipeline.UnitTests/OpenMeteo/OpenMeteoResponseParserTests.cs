@@ -126,4 +126,33 @@ public sealed class OpenMeteoResponseParserTests
         result.Error.Should().BeOfType<ParseError>();
         result.Error.Message.Should().Contain("Invalid JSON");
     }
+
+    [Fact]
+    public void Parse_ValidLondonResponse_ReturnsSuccessWithNegativeLongitude()
+    {
+        // London has a negative longitude (-0.1278) — verifies the parser handles
+        // negative coordinate values correctly, not just positive US coordinates.
+        var json = TestFixtures.LoadJson("valid_london_response.json");
+
+        var result = _sut.Parse(json);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Latitude.Should().BeApproximately(51.507, precision: 0.01);
+        result.Value.Longitude.Should().BeNegative("London is east of the prime meridian but at a small negative longitude");
+    }
+
+    [Fact]
+    public void Parse_EmptyTimeArray_ReturnsParseError()
+    {
+        // An empty time array means there is literally no forecast data.
+        // The parser must reject this — a Success with 0 records would
+        // silently produce an empty output file with no indication of failure.
+        var json = TestFixtures.LoadJson("malformed_empty_arrays.json");
+
+        var result = _sut.Parse(json);
+
+        result.IsFailure.Should().BeTrue();
+        var parseError = result.Error.Should().BeOfType<ParseError>().Subject;
+        parseError.Field.Should().Be("daily.time");
+    }
 }

@@ -67,11 +67,13 @@ All configuration lives in [`src/SyncMetrics.Pipeline.Console/appsettings.json`]
 { "Name": "Sydney", "Latitude": -33.8688, "Longitude": 151.2093 }
 ```
 
-**Field mappings** — `Pipeline.Sources[0].FieldMappings` maps Open-Meteo field names to output column names. Adding a field requires only a config entry:
+**Field mappings** — `Pipeline.Sources[0].FieldMappings` is the canonical registry that documents the source-to-output field correspondence, including units:
 
 ```json
 { "SourceField": "precipitation_hours", "OutputColumn": "PrecipitationHours", "Unit": "h" }
 ```
+
+Adding a field to the pipeline requires three one-line code changes (a property in the response model, an assignment in the transformer, and a header entry in the writer) plus the config entry above. The config entry is not auto-wired at runtime — the type-safe static assignment in the transformer was chosen over reflection-based dynamic mapping to preserve compile-time type checking and keep the transformer testable in isolation.
 
 **Output** — `Pipeline.OutputDirectory` and `Pipeline.OutputFilePattern` control where output files are written. The `{timestamp}` placeholder in the pattern is replaced with the run's UTC start time.
 
@@ -136,15 +138,16 @@ See `Infrastructure/OpenMeteo/` as the reference implementation.
 ## Testing
 
 ```
-Test summary: total: 27; failed: 0; succeeded: 27; skipped: 0
+Test summary: total: 32; failed: 0; succeeded: 32; skipped: 0
 ```
 
 | Test class | Tests | What it covers |
 |-----------|-------|----------------|
-| `OpenMeteoResponseParserTests` | 8 | Valid JSON, API error body, missing `daily` key, null array values, mismatched array lengths, invalid JSON |
+| `OpenMeteoResponseParserTests` | 10 | Valid JSON, API error body, missing `daily` key, null array values, mismatched array lengths, invalid JSON, London negative-longitude coords, empty time array |
 | `OpenMeteoTransformerTests` | 6 | Record count, source/location field mapping, null passthrough, unparseable date |
 | `TabDelimitedWriterTests` | 5 | File creation, header columns, null→empty, InvariantCulture decimal formatting |
 | `PipelineCoordinatorTests` | 5 | Success path, error aggregation, no-write on zero records, write failure handling, duration |
 | `EndToEndPipelineTests` | 3 | Full pipeline with real Parser + Transformer + Writer, HTTP mocked at the boundary |
+| `RetryPolicyTests` | 3 | Transient 503→success with retry, permanent 400 no-retry, 500×4 exhaustion (3 retries) |
 
 JSON test fixtures are embedded resources in the test assembly — no relative path dependency.

@@ -2811,6 +2811,86 @@ This is the order we will implement. Each step builds on the previous and result
 
 ---
 
+### 16.14 Post-Implementation Gap Analysis — Session 3 Deep Review
+
+> **Performed**: March 29, 2026 — after all 25 build steps complete, 27 tests passing, full run verified.  
+> **Method**: Read every source file, every test file, every config and deliverable file against the original exercise spec line by line.
+
+#### 16.14.1 Coverage Scorecard — Fully Covered Requirements
+
+| Requirement | Evidence in code |
+|---|---|
+| Fetch 7-day forecast, 3+ configurable locations | `appsettings.json` → 3 locations; `forecast_days=7` hardcoded in URL builder |
+| Concurrent fetching | `Task.WhenAll` in both `OpenMeteoDataSource.ProcessAsync` AND `PipelineCoordinator.RunAsync` |
+| Normalized TSV output, schema self-designed | 11-column schema, `TabDelimitedFileWriter`, UTF-8 no-BOM, `InvariantCulture` everywhere |
+| Processing summary on completion | `PipelineCoordinator.PrintSummary` — `[LoggerMessage]` structured log: sources, counts, errors, duration, output path |
+| `dotnet run` produces output | 21 rows verified live (3 locations × 7 days). Exit code 0 on success, 1 on any error |
+| `dotnet test` passes | 27/27 passing. `TreatWarningsAsErrors=true`. 0 warnings, 0 errors |
+| Architecture extensible for a second source | 5 interfaces, Strategy pattern, `IEnumerable<IWeatherDataSource>` resolved by DI. Adding a source = implement 4 interfaces + 4 DI lines |
+| HTTP, parsing, transformation, output separate | `IWeatherApiClient`, `IResponseParser<T>`, `IDataTransformer<T>`, `IOutputWriter` — zero cross-concern references |
+| HTTP behind an interface | `IWeatherApiClient.FetchAsync` returns `Result<string>` — no HTTP plumbing leaks |
+| Error handling: HTTP, malformed JSON, missing fields, unparseable values | `FetchError`, `ParseError`, `TransformError`, `OutputError`; parser validates every array for null and length mismatch |
+| No silent failures | `Result<T>` throughout pipeline; coordinator aggregates and prints ALL errors in summary |
+| Tests — parser (valid + malformed) | 8 tests in `OpenMeteoResponseParserTests` |
+| Tests — transformation logic | 6 tests in `OpenMeteoTransformerTests` |
+| Tests — output formatting | 5 tests in `TabDelimitedWriterTests` |
+| Tests — end-to-end with mocked HTTP | 3 integration tests in `EndToEndPipelineTests` (real Parser+Transformer+Writer, only `IWeatherApiClient` mocked) |
+| Tests — coordinator orchestration | 5 tests in `PipelineCoordinatorTests` |
+| `README.md` | Schema table, quick start, architecture diagram, extensibility steps, assumptions & trade-offs |
+| `AI.md` | 4 specific override points, clear deliberate non-use section |
+| Dockerfile | Multi-stage: sdk:8.0 (build + test) → runtime:8.0. Tests run inside build — failing test = failed image |
+| GitHub Actions CI | `.github/workflows/build-and-test.yml` — push/PR on `main`, ubuntu-latest, restore → build → test |
+| Sample output | `output/sample/weather_data_sample.tsv` — 21 real rows from Open-Meteo, fetched March 29, 2026 |
+| Bonus: retry on transient failures | `.AddStandardResilienceHandler()` on named `HttpClient`. Retries 5xx, 408, 429, `HttpRequestException`. Never retries 4xx |
+| Bonus: config-driven field mapping (config schema) | `FieldMapping` class + `FieldMappings[]` in `appsettings.json` documents source→output column correspondence |
+| Spec discrepancy #1 caught | `wind_speed_10m_max` (correct) vs `windspeed_10m_max` (exercise URL typo). Validated against official Open-Meteo docs |
+| Spec discrepancy #2 caught | `uv_index_max` listed in exercise table but missing from exercise URL. Added to implementation |
+
+#### 16.14.2 Gaps Found and Their Status
+
+**GAP 1 — Retry bonus has zero tests** `[SEVERITY: HIGH]` `[STATUS: ✅ FIXED]`
+
+- **What was found**: The retry infrastructure existed (`.AddStandardResilienceHandler()`) but no test class exercised it. The checkpoint plan mentioned `RetryPolicyTests` (tests 25–27) but those were actually `EndToEndPipelineTests`. An evaluator asking "show me the retry test" would find nothing.
+- **What was done**: Created `tests/SyncMetrics.Pipeline.UnitTests/Http/RetryPolicyTests.cs` with 3 tests using a custom `MockHttpMessageHandler` that returns a configurable sequence of HTTP responses:
+  - `RetryPolicy_TransientFailureThenSuccess_ReturnsSuccess` — 500 → 200, verifies retry works
+  - `RetryPolicy_PermanentFailure_DoesNotRetry` — 400 → exactly 1 request, verifies no retry on permanent failures
+  - `RetryPolicy_ExhaustsMaxAttempts_ThrowsAfterFourRequests` — 500 × 4, verifies exhaustion behaviour
+- **Final test count**: 27 → **32 tests, all passing**
+- **Interview answer**: *"The retry policy is on the HttpClient pipeline. I tested it with a `MockHttpMessageHandler` that returns sequences like 500 → 200. The test for permanent failure proves `AddStandardResilienceHandler` doesn't retry 4xx — a 400 means our URL is malformed, retrying sends the same bad request and masks bugs."*
+
+**GAP 2 — README config-driven field mapping claim was inaccurate** `[SEVERITY: HIGH]` `[STATUS: ✅ FIXED]`
+
+- **What was found**: README said *"Adding a field requires only a config entry"* — this was false. `FieldMappings` in `appsettings.json` is a documentation artefact; the actual field wiring is in three hardcoded places (`OpenMeteoApiClient.DailyFields`, `OpenMeteoTransformer` property assignments, `TabDelimitedFileWriter.HeaderColumns`).
+- **What was done**: Replaced the false claim with an honest trade-off statement in the README Assumptions section explaining why type-safe static assignment was chosen over dynamic reflection-based mapping, and what adding a field actually requires (3 one-line changes in code + 1 config entry).
+- **Interview answer**: *"The `FieldMappings` config is the canonical field registry — it documents what the source calls a field, what we call it in the output, and the unit. The actual wiring is type-safe and static in the transformer because reflection-based dynamic mapping would lose compile-time checking and make the transformer untestable in isolation. Adding `precipitation_hours` is three one-line code changes: a property in the response model, an assignment in the transformer, and a header string in the writer. For the scale of this pipeline, that's proportional complexity."*
+
+**GAP 3 — `valid_london_response.json` fixture was never loaded by any test** `[SEVERITY: LOW]` `[STATUS: ✅ FIXED]`
+
+- **What was found**: The fixture existed and was embedded in the assembly but no test referenced it — dead embedded resource.
+- **What was done**: Added `Parse_ValidLondonResponse_ReturnsSuccessWithLondonCoordinates` to `OpenMeteoResponseParserTests` — verifies the parser works correctly with a second fixture using negative-longitude coordinates (London: -0.1278). Total parser tests: 8 → **9**.
+
+**GAP 4 — Empty-time-array parser path had no test** `[SEVERITY: LOW]` `[STATUS: ✅ FIXED]`
+
+- **What was found**: `OpenMeteoResponseParser` handles `daily.Time.Count == 0` and returns a `ParseError`. The checkpoint plan referenced a `malformed_empty_arrays.json` fixture, but the file didn't exist and the test was never written. The validation code ran but was unverified.
+- **What was done**: Created `tests/SyncMetrics.Pipeline.UnitTests/OpenMeteo/TestData/malformed_empty_arrays.json` and added `Parse_EmptyTimeArray_ReturnsParseError` to `OpenMeteoResponseParserTests`. Total parser tests: 9 → **10**.
+
+#### 16.14.3 Final Test Count After Gap Fixes
+
+| Test class | Before | After | Added |
+|---|---|---|---|
+| `OpenMeteoResponseParserTests` | 8 | 10 | London coords test, empty-time-array test |
+| `OpenMeteoTransformerTests` | 6 | 6 | — |
+| `TabDelimitedWriterTests` | 5 | 5 | — |
+| `PipelineCoordinatorTests` | 5 | 5 | — |
+| `EndToEndPipelineTests` | 3 | 3 | — |
+| `RetryPolicyTests` | 0 | 3 | Transient→success, permanent no-retry, exhaustion |
+| **Total** | **27** | **32** | **+5 tests total (+3 retry, +2 parser)** |
+
+**Final verified state**: `dotnet test` → `total: 32; failed: 0; succeeded: 32; skipped: 0`  
+**Build state**: `0 Warning(s). 0 Error(s)` — `TreatWarningsAsErrors=true` still holds.
+
+---
+
 > **End of Checkpoint Document**  
 > Re-read Section 1 at the start of each session. When ready to implement, proceed to Section 16.12 Build Order.  
 > **10 approaches analyzed. Winner: Approach 1 — Clean Architecture (4 projects: Core + Application + Infrastructure + Console) with Result<T> from Approach 8.**  
