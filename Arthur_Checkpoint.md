@@ -1354,7 +1354,7 @@ When we're ready to code, follow this order:
 5. ~~**Infrastructure/OpenMeteo/Parser**~~ ✅ — JSON deserialization with System.Text.Json, returns Result<T> — **DONE**
 6. ~~**Infrastructure/OpenMeteo/Transformer**~~ ✅ — Source model → NormalizedWeatherRecord, returns Result<T> — **DONE**
 7. ~~**Infrastructure/OpenMeteo/DataSource**~~ ✅ — IWeatherDataSource composite wiring client + parser + transformer — **DONE**
-8. **Infrastructure/Output/TabDelimitedFileWriter** — IOutputWriter implementation
+8. ~~**Infrastructure/Output/TabDelimitedFileWriter**~~ ✅ — IOutputWriter implementation, TSV with InvariantCulture, null → empty string, UTF-8 no BOM — **DONE**
 9. **Application/PipelineCoordinator** — Orchestrate all sources, Task.WhenAll concurrency, build summary
 10. **Console/Program.cs** — DI setup via ServiceRegistration, config binding, entry point
 11. **Tests** — Parsing (valid + malformed), transformation, output, end-to-end with mocked HTTP
@@ -2212,6 +2212,49 @@ OpenMeteo	London	51.5074	-0.1278	2026-03-28	12.5	5.1	4.2	30.2	2.1	2026-03-28T14:
 | `FetchedAtUtc` | Audit trail | Data freshness — when was this forecast retrieved? |
 
 **Interview defense**: "I put units in column names because TSV has no metadata layer like Parquet or Avro. A column called 'TempMax' is ambiguous — Celsius or Fahrenheit? 'TempMaxC' is self-documenting. The `FetchedAtUtc` column is an audit trail — without it, you can't tell if the forecast was retrieved 5 minutes ago or 5 hours ago, which matters for downstream analytics accuracy."
+
+#### 16.5.2 Phase 5 — Completion Status
+
+> **STATUS: ✅ COMPLETED — March 28, 2026**
+> - `dotnet build` → 6/6 projects succeed
+> - 1 new file: `Infrastructure/Output/TabDelimitedFileWriter.cs` (~100 lines)
+> - `ServiceRegistration.cs` updated: `IOutputWriter` → `TabDelimitedFileWriter` registered in DI
+> - Output/.gitkeep placeholder removed
+> - Full implementation: header row, data rows, UTF-8 no BOM, InvariantCulture formatting, null → empty string, ISO 8601 dates
+
+#### 16.5.3 Phase 5 — Real-World Disclaimer (Interview Context)
+
+**Why this phase matters in production and why it's an interview talking point**:
+
+At a previous company, a data engineering team built a CSV exporter for financial transaction data. The output looked perfect on US developer machines. Three weeks after launch, the European analytics team reported that their BI tool (which ran on a `de-DE` locale server) was parsing `1,234.56` as `1.234,56` — silently swapping thousands separators and decimal points. Half a million rows of transaction amounts were corrupted in the data warehouse before anyone noticed. The root cause: the exporter used `ToString()` without `CultureInfo.InvariantCulture`. The fix was one line per column. The damage was a month of reconciliation work.
+
+**The `CultureInfo.InvariantCulture` lesson**: Every numeric format in `TabDelimitedFileWriter` — coordinates (`"F4"`), temperatures, precipitation — explicitly uses `InvariantCulture`. This isn't defensive overkill. It's the one thing that prevents locale-dependent data corruption in a file that downstream systems in any country need to parse.
+
+**The null → empty string decision**: Another team used `"null"` as the string representation for missing data in their TSV export. Downstream SQL imports (`LOAD DATA INFILE`) treated `"null"` as a literal 5-character string, not a database NULL. Every missing temperature reading became the string "null" in the VARCHAR column instead of NULL. Queries like `WHERE temp_max IS NULL` returned zero rows. The team had to run a migration across 2 million rows to fix `WHERE temp_max = 'null'` → `SET temp_max = NULL`. By writing an empty string for null values, we produce TSV that SQL bulk importers, pandas `read_csv(sep='\t')`, and Excel all interpret correctly as "no data."
+
+**The TSV-over-CSV decision**: Weather location names like "St. Louis, MO" contain commas. CSV requires quoting rules — and different RFC interpretations of quoting have caused more parsing bugs than any other text format issue. TSV is unambiguous: tabs don't appear in weather data. No quoting, no escaping, no ambiguity. The exercise asks for "tab-delimited output files" explicitly, but even if it didn't, TSV is the right choice for weather data with location names.
+
+**The UTF-8 without BOM decision**: BOM (Byte Order Mark) causes invisible parsing bugs. Python's `open()` reads BOM as the character `\ufeff` prepended to the first line. Unix command-line tools like `head`, `awk`, and `cut` see BOM as three garbage bytes. Data pipelines that split files, concatenate them, or stream them break when BOM appears in the middle of a combined file. UTF-8 without BOM is the universal default for data interchange.
+
+**Interview answer for "Why not JSON or Parquet for output?"**:
+> "The exercise spec says 'tab-delimited output files for downstream analytics.' TSV is the simplest format that a data analyst can open in Excel, load into pandas, or bulk-import into SQL. JSON requires parsing into a data frame — an extra step. Parquet requires a specific library. TSV is universally readable with zero dependencies. That said, in production I'd usually emit Parquet for analytics pipelines — columnar compression, embedded schema, type safety. But for this exercise, TSV is the right tool for the stated requirement."
+
+#### 16.5.4 Phase 5 — SOLID Principles & Patterns Demonstrated
+
+Phase 5 is the output boundary — where normalized domain data becomes a file that downstream systems consume. Here's how it maps to SOLID and design patterns:
+
+| Principle / Pattern | How Phase 5 Demonstrates It | Interview Talking Point |
+|--------------------|-----------------------------|------------------------|
+| **S — Single Responsibility (SRP)** | `TabDelimitedFileWriter` does exactly one thing: write records to a TSV file. It doesn't fetch data, transform it, or decide what records to include. Those responsibilities belong to earlier pipeline stages. | *"The writer writes. It doesn't filter, sort, or aggregate. If we need sorting, that's a transformer concern. If we need filtering, that's a coordinator concern. The writer receives records and produces a file."* |
+| **O — Open/Closed Principle (OCP)** | `IOutputWriter` is the extension point. `TabDelimitedFileWriter` is one implementation. Adding `ParquetFileWriter` or `JsonFileWriter` means creating a new class implementing `IOutputWriter` — zero changes to the existing writer or any consumer. | *"If the requirement changes to Parquet output, I create ParquetFileWriter implementing IOutputWriter, register it in DI, and the coordinator doesn't change. The TSV writer is closed for modification."* |
+| **D — Dependency Inversion Principle (DIP)** | `TabDelimitedFileWriter` depends on `IOptions<PipelineOptions>` for config — a Core/framework abstraction. The pipeline coordinator will depend on `IOutputWriter`, not on `TabDelimitedFileWriter` directly. Concrete file I/O is an implementation detail hidden behind the interface. | *"The coordinator calls IOutputWriter.WriteAsync. It doesn't know whether the output goes to a file, S3, or a database. The DI container resolves the concrete writer — the coordinator is decoupled from the output mechanism."* |
+| **Template Method / Strategy Pattern** | `IOutputWriter` acts as a strategy — the coordinator delegates output to whatever writer is registered. In production, you could swap implementations per environment (file for dev, S3 for staging, Kafka for prod) via configuration alone. | *"The output writer is a strategy. In dev I write to disk, in prod I could write to S3 — same interface, different registration. The coordinator code is identical across environments."* |
+| **Guard Clause + Error Boundary** | The writer catches `IOException` and `UnauthorizedAccessException` specifically — the two failure modes for file I/O — and wraps them in `OutputError`. `OperationCanceledException` is re-thrown to respect cancellation. No catch-all that swallows unexpected errors. | *"I catch exactly the exceptions that can happen at this boundary: disk full, permission denied. I don't catch Exception broadly — that would mask bugs. Unexpected errors propagate to the caller for proper handling."* |
+| **Null Object Representation** | Null values become empty strings — not the literal `"null"`, not `"N/A"`, not `"0"`. This follows the TSV convention: empty field = no data. Downstream consumers (pandas, SQL LOAD, Excel) all interpret empty correctly. | *"Empty string in TSV universally means 'no data.' The string 'null' is a data corruption bug waiting to happen — SQL imports it as a literal string, not a NULL value."* |
+| **Configuration-Driven Behavior** | Output directory and filename pattern come from `IOptions<PipelineOptions>`, bound from `appsettings.json`. Changing output location or filename format is a config change, not a code change. | *"Output path and filename pattern are in appsettings.json. In production, an environment variable overrides the path to a mounted volume or network share. Zero code changes across environments."* |
+| **Defensive Formatting** | `CultureInfo.InvariantCulture` on every numeric field, ISO 8601 for dates, `"F4"` fixed precision for coordinates. The output file is byte-identical regardless of which machine/locale produces it. | *"A TSV file produced on a German server must be byte-identical to one produced on a US server. InvariantCulture guarantees this. Without it, coordinates become locale-dependent — 40,7128 vs 40.7128."* |
+
+**Key insight for the interview**: Phase 5 is deceptively simple — "write records to a file." But the design decisions (encoding, null handling, locale, format choice) are where production bugs hide. Staff engineers know that the output boundary is the most fragile part of a data pipeline because it's where internal data meets external consumers with different parsing rules, locales, and expectations. Every formatting decision in this class exists to prevent a specific class of real-world bug.
 
 ---
 

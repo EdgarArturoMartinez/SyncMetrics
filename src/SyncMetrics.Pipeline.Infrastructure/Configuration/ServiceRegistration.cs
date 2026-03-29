@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SyncMetrics.Pipeline.Core.Interfaces;
 using SyncMetrics.Pipeline.Infrastructure.OpenMeteo;
+using SyncMetrics.Pipeline.Infrastructure.Output;
 
 namespace SyncMetrics.Pipeline.Infrastructure.Configuration;
 
@@ -36,8 +37,8 @@ public static class ServiceRegistration
         services.AddSingleton<IDataTransformer<OpenMeteoApiResponse>, OpenMeteoTransformer>();
         services.AddSingleton<IWeatherDataSource, OpenMeteoDataSource>();
 
-        // TODO: Phase 5 — Output writer
-        // services.AddSingleton<IOutputWriter, TabDelimitedFileWriter>();
+        // Phase 5 — Output writer
+        services.AddSingleton<IOutputWriter, TabDelimitedFileWriter>();
 
         // TODO: Phase 6 — Pipeline coordinator
         // services.AddSingleton<PipelineCoordinator>();
