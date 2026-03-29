@@ -5,7 +5,13 @@ using SyncMetrics.Pipeline.Application;
 using SyncMetrics.Pipeline.Core.Models;
 using SyncMetrics.Pipeline.Infrastructure.Configuration;
 
-var builder = Host.CreateApplicationBuilder(args);
+// Pin content root to the assembly's directory so appsettings.json is found regardless
+// of the working directory (solution root when running with `dotnet run --project`).
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+{
+    ContentRootPath = AppContext.BaseDirectory,
+    Args = args,
+});
 
 // Wire all pipeline services — config binding, HTTP clients, DI registrations
 builder.Services.AddPipelineServices(builder.Configuration);
