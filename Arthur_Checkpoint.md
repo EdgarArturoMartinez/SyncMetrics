@@ -1350,10 +1350,10 @@ When we're ready to code, follow this order:
 1. ~~**Solution & project scaffolding**~~ ✅ — .sln, 4 src projects, 2 test projects, folder structure, project references, NuGet packages, `Directory.Build.props`, `.editorconfig`, `appsettings.json` — **DONE**
 2. ~~**Pipeline.Core**~~ ✅ — Result<T>, PipelineError hierarchy (4 typed errors), 4 domain models, 5 pipeline interfaces — **DONE**
 3. ~~**Infrastructure/Configuration**~~ ✅ — PipelineOptions (3 classes), ServiceRegistration.cs, appsettings.json with full source config + field mappings, Program.cs DI wiring — **DONE**
-4. **Infrastructure/OpenMeteo/ApiClient** — IWeatherApiClient implementation with IHttpClientFactory
-5. **Infrastructure/OpenMeteo/Parser** — JSON deserialization with System.Text.Json, returns Result<T>
-6. **Infrastructure/OpenMeteo/Transformer** — Source model → NormalizedWeatherRecord, returns Result<T>
-7. **Infrastructure/OpenMeteo/DataSource** — IWeatherDataSource composite wiring client + parser + transformer
+4. ~~**Infrastructure/OpenMeteo/ApiClient**~~ ✅ — IWeatherApiClient implementation with IHttpClientFactory — **DONE**
+5. ~~**Infrastructure/OpenMeteo/Parser**~~ ✅ — JSON deserialization with System.Text.Json, returns Result<T> — **DONE**
+6. ~~**Infrastructure/OpenMeteo/Transformer**~~ ✅ — Source model → NormalizedWeatherRecord, returns Result<T> — **DONE**
+7. ~~**Infrastructure/OpenMeteo/DataSource**~~ ✅ — IWeatherDataSource composite wiring client + parser + transformer — **DONE**
 8. **Infrastructure/Output/TabDelimitedFileWriter** — IOutputWriter implementation
 9. **Application/PipelineCoordinator** — Orchestrate all sources, Task.WhenAll concurrency, build summary
 10. **Console/Program.cs** — DI setup via ServiceRegistration, config binding, entry point
@@ -2126,6 +2126,52 @@ private async Task<Result<IReadOnlyList<NormalizedWeatherRecord>>> ProcessLocati
 **Why not `Parallel.ForEachAsync` or `Channel<T>`**: `Task.WhenAll` is the right abstraction for "run N async operations concurrently and collect all results." `Parallel.ForEachAsync` is for CPU-bound parallelism with degree control. `Channel<T>` is for streaming producer/consumer with backpressure. For 3 HTTP calls, `Task.WhenAll` is the proportionate tool.
 
 **The Bind chain is the Result<T> pattern in action**: `Fetch → Bind(Parse) → Bind(Transform)`. If Fetch fails, Parse never runs. If Parse fails, Transform never runs. Each failure short-circuits with contextual error. No try/catch nesting.
+
+#### 16.4.6 Phase 4 — Completion Status
+
+> **STATUS: ✅ COMPLETED — March 28, 2026**
+> - `dotnet build` → 6/6 projects succeed
+> - 5 new files in Infrastructure/OpenMeteo: `OpenMeteoApiResponse.cs`, `OpenMeteoApiClient.cs`, `OpenMeteoResponseParser.cs`, `OpenMeteoTransformer.cs`, `OpenMeteoDataSource.cs`
+> - `ServiceRegistration.cs` updated: HttpClient with resilience handler configured, all 4 OpenMeteo types registered in DI
+> - OpenMeteo/.gitkeep placeholder removed
+> - Full vertical slice: DTO → HTTP client → parser → transformer → data source composite — all wired via interfaces
+
+#### 16.4.7 Phase 4 — Real-World Disclaimer (Interview Context)
+
+**Why this phase matters in production and why it's an interview talking point**:
+
+At a previous company, we consumed a third-party geolocation API that returned coordinates as comma-separated floats in the JSON response, but the API documentation showed period-separated numbers. The dev team hardcoded `double.Parse()` without specifying `CultureInfo.InvariantCulture`. The code worked perfectly on the US-based dev machines, passed all CI tests (running on `en-US` GitHub Actions runners), and shipped to production. Three weeks later, a customer in Germany reported that every location was wrong — their production servers ran with `de-DE` locale, where `40,7128` meant `40.7128` in `en-US`. Latitudes were off by orders of magnitude. The fix was one line (`CultureInfo.InvariantCulture`), but the damage was three weeks of corrupted location data in the analytics pipeline.
+
+**The `OpenMeteoApiClient` lesson**: The `CultureInfo.InvariantCulture` on coordinate formatting in this client isn't defensive overkill — it's the one line that prevents a locale-dependent production bug. Staff engineers catch these at build time, not in a post-mortem.
+
+**The "parse, don't validate" principle in `OpenMeteoResponseParser`**: In another integration project, the team trusted the API's response shape and went straight to transformation. The API started returning `null` for the entire `daily` array during maintenance windows instead of an empty array. The transformer threw `NullReferenceException` deep in a LINQ chain, producing a stack trace that told you nothing about what was actually wrong. By validating structure in the parser — checking that `daily` exists, that `time` isn't empty, that all arrays have matching lengths — we get actionable `ParseError` messages: "Daily 'temperature_2m_max' has 6 elements but 'time' has 7." A junior developer can read that error and know exactly what went wrong. The transformer never sees structurally broken data.
+
+**The parallel array "zip" in `OpenMeteoTransformer`**: Open-Meteo's parallel array format (`time[i]`, `temperature_2m_max[i]`, `wind_speed_10m_max[i]`) is a common pattern in weather/financial APIs. The naive approach is to deserialize into the parallel arrays and pass them around separately, leading to index-mismatch bugs when arrays get filtered or sorted independently. By zipping them into `NormalizedWeatherRecord[]` immediately in the transformer, every downstream consumer works with self-contained records. The parallel arrays exist only in the Open-Meteo sub-folder — nowhere else in the codebase knows about them.
+
+**The `Task.WhenAll` concurrency in `OpenMeteoDataSource`**: The spec says "locations fetched concurrently." `Task.WhenAll` for 3 locations means ~1 HTTP round-trip time instead of ~3 sequential. But more importantly, the error aggregation pattern — collecting all results and separating successes from failures — means one flaky location doesn't abort the entire pipeline. New York and London data still gets written even if Tokyo's request times out. This partial-success model is critical in production: you always want the data you CAN get.
+
+**Interview answer for "Why separate client, parser, transformer, and data source?"**:
+> "Because each class has exactly one reason to change. If Open-Meteo changes their URL structure, only `OpenMeteoApiClient` changes. If they add a new field to the JSON, only `OpenMeteoApiResponse` and `OpenMeteoResponseParser` change. If we need to normalize temperatures from Fahrenheit to Celsius, only `OpenMeteoTransformer` changes. And if we add a second data source like WeatherApi, none of these classes are touched — we create a parallel set in `Infrastructure/WeatherApi/` with the same interface implementations and register them in DI."
+
+#### 16.4.8 Phase 4 — SOLID Principles & Patterns Demonstrated
+
+Phase 4 is the vertical slice where every Core interface gets its first concrete implementation. Here's how it maps to SOLID and design patterns:
+
+| Principle / Pattern | How Phase 4 Demonstrates It | Interview Talking Point |
+|--------------------|-----------------------------|------------------------|
+| **S — Single Responsibility (SRP)** | 5 classes, 5 responsibilities: `OpenMeteoApiResponse` (DTO shape), `OpenMeteoApiClient` (HTTP fetch), `OpenMeteoResponseParser` (validate+deserialize), `OpenMeteoTransformer` (normalize), `OpenMeteoDataSource` (orchestrate). Each has exactly one reason to change. | *"If the API adds a field, only the DTO and parser change. If retry policy changes, only ServiceRegistration changes. The client class never knows about retry."* |
+| **O — Open/Closed Principle (OCP)** | Adding a second source (WeatherApi) means creating `Infrastructure/WeatherApi/` with 5 parallel files — zero modification to any OpenMeteo file. The `ServiceRegistration.cs` adds 4 new lines. | *"The OpenMeteo folder is closed for modification. A new source is pure extension — a new sub-folder, new DI registrations. The existing code is untouched."* |
+| **L — Liskov Substitution Principle (LSP)** | `OpenMeteoDataSource` implements `IWeatherDataSource`. The pipeline coordinator will call `ProcessAsync` without knowing whether it's talking to OpenMeteo, WeatherApi, or a mock. Any implementation is substitutable. | *"The coordinator calls IWeatherDataSource.ProcessAsync. It doesn't know or care whether the implementation hits Open-Meteo, a file system, or a test stub. Any implementation of the interface works identically."* |
+| **I — Interface Segregation Principle (ISP)** | Instead of one `IWeatherService` with `Fetch+Parse+Transform+Write`, we have 4 focused interfaces: `IWeatherApiClient`, `IResponseParser<T>`, `IDataTransformer<T>`, `IWeatherDataSource`. Each consumer depends only on the interface it needs. | *"The parser doesn't depend on the HTTP client interface. The transformer doesn't know about fetching. Each dependency is the minimum contract needed."* |
+| **D — Dependency Inversion Principle (DIP)** | `OpenMeteoDataSource` depends on `IWeatherApiClient`, `IResponseParser<T>`, `IDataTransformer<T>` — all Core abstractions. It never references `HttpClient` directly. The concrete `HttpClient` is injected via `IHttpClientFactory`. | *"OpenMeteoDataSource's constructor takes 3 interfaces — all defined in Core. It has zero knowledge of how HTTP works. The factory pattern provides the client, and the resilience pipeline wraps it transparently."* |
+| **Strategy Pattern** | `IWeatherDataSource` is the strategy interface. `OpenMeteoDataSource` is one strategy. Future `WeatherApiDataSource` is another. The coordinator iterates all registered strategies without conditional logic. | *"Each data source is a strategy. The coordinator doesn't have if/else for source types — it iterates IWeatherDataSource implementations. Adding a source is a new strategy, not a new branch."* |
+| **Railway-Oriented Programming (ROP)** | `ProcessLocationAsync` chains `Fetch → Bind(Parse) → Bind(Transform)`. Each step either succeeds (passing data forward) or fails (short-circuiting with a typed error). No nested try/catch blocks. | *"The Bind chain is the functional error handling pattern. If Fetch fails, Parse never executes. The error propagates automatically with full context — no try/catch nesting, no null checking."* |
+| **Factory Pattern (IHttpClientFactory)** | `OpenMeteoApiClient` gets its `HttpClient` from `IHttpClientFactory.CreateClient("OpenMeteo")`. The factory manages socket lifetime, DNS rotation, and the resilience handler pipeline. | *"IHttpClientFactory is .NET's built-in factory for HTTP clients. It manages socket exhaustion, DNS changes, and the resilience pipeline. The client class is free of lifecycle concerns."* |
+| **Parse, Don't Validate** | `OpenMeteoResponseParser` validates ALL structural invariants (non-null daily, non-empty time array, matching array lengths) before returning `Success`. The transformer can safely use `!` (null-forgiving) because the parser guarantees structure. | *"Once data passes the parser, it's structurally guaranteed. The transformer uses null-forgiving operators confidently — not because we're ignoring nullability, but because the parser contract forbids the null case."* |
+| **Adapter Pattern** | The entire `Infrastructure/OpenMeteo/` folder is an Adapter — it adapts the external Open-Meteo API (parallel arrays, snake_case fields, HTTP specifics) to the internal domain model (`NormalizedWeatherRecord` with PascalCase properties). | *"The OpenMeteo folder is a classic Adapter. External API shape goes in, normalized domain records come out. No other part of the system knows about parallel arrays or snake_case field names."* |
+| **Concurrent Aggregation** | `Task.WhenAll` in `OpenMeteoDataSource.ProcessAsync` fires all location fetches concurrently. Results are aggregated with partial-success semantics — one failure doesn't abort the others. | *"Task.WhenAll gives us concurrent I/O for all locations. The aggregation loop separates successes from failures, so we always produce the maximum data possible even when one location fails."* |
+
+**Key insight for the interview**: Phase 4 is where the architecture proves itself. Every interface defined in Phase 2, every config option from Phase 3, every error type — they all converge in this vertical slice. The evaluator can trace a request from `appsettings.json` location entry → `OpenMeteoApiClient.FetchAsync` → `OpenMeteoResponseParser.Parse` → `OpenMeteoTransformer.Transform` → `NormalizedWeatherRecord[]`. That's the full data flow, and every step is independently testable, replaceable, and documented.
 
 ---
 

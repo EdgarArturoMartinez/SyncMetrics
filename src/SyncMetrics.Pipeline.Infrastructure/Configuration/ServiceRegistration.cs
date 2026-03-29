@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using SyncMetrics.Pipeline.Core.Interfaces;
+using SyncMetrics.Pipeline.Infrastructure.OpenMeteo;
 
 namespace SyncMetrics.Pipeline.Infrastructure.Configuration;
 
@@ -18,23 +20,26 @@ public static class ServiceRegistration
         services.Configure<PipelineOptions>(
             configuration.GetSection(PipelineOptions.SectionName));
 
-        // TODO: Phase 4 — HTTP client with resilience
-        // services.AddHttpClient("OpenMeteo", client =>
-        // {
-        //     client.BaseAddress = new Uri(sourceOptions.BaseUrl);
-        //     client.Timeout = TimeSpan.FromSeconds(sourceOptions.TimeoutSeconds);
-        // }).AddStandardResilienceHandler();
+        // Phase 4 — HTTP client with resilience pipeline
+        services.AddHttpClient("OpenMeteo", client =>
+        {
+            client.BaseAddress = new Uri(
+                configuration.GetValue<string>("Pipeline:Sources:0:BaseUrl")
+                ?? "https://api.open-meteo.com/v1/forecast");
+            client.Timeout = TimeSpan.FromSeconds(
+                configuration.GetValue<int>("Pipeline:Sources:0:TimeoutSeconds", 30));
+        }).AddStandardResilienceHandler();
 
-        // TODO: Phase 7 — Open-Meteo feature registrations
-        // services.AddSingleton<IWeatherApiClient, OpenMeteoApiClient>();
-        // services.AddSingleton<IResponseParser<OpenMeteoApiResponse>, OpenMeteoResponseParser>();
-        // services.AddSingleton<IDataTransformer<OpenMeteoApiResponse>, OpenMeteoTransformer>();
-        // services.AddSingleton<IWeatherDataSource, OpenMeteoDataSource>();
+        // Phase 4 — Open-Meteo data source registrations
+        services.AddSingleton<IWeatherApiClient, OpenMeteoApiClient>();
+        services.AddSingleton<IResponseParser<OpenMeteoApiResponse>, OpenMeteoResponseParser>();
+        services.AddSingleton<IDataTransformer<OpenMeteoApiResponse>, OpenMeteoTransformer>();
+        services.AddSingleton<IWeatherDataSource, OpenMeteoDataSource>();
 
-        // TODO: Phase 8 — Output writer
+        // TODO: Phase 5 — Output writer
         // services.AddSingleton<IOutputWriter, TabDelimitedFileWriter>();
 
-        // TODO: Phase 9 — Pipeline coordinator
+        // TODO: Phase 6 — Pipeline coordinator
         // services.AddSingleton<PipelineCoordinator>();
 
         return services;
