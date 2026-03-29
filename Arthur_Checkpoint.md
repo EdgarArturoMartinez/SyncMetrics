@@ -1348,7 +1348,7 @@ Max retries: 3 (4 total attempts)
 When we're ready to code, follow this order:
 
 1. ~~**Solution & project scaffolding**~~ ✅ — .sln, 4 src projects, 2 test projects, folder structure, project references, NuGet packages, `Directory.Build.props`, `.editorconfig`, `appsettings.json` — **DONE**
-2. **Pipeline.Core** — Result<T>, PipelineError, all interfaces, all models
+2. ~~**Pipeline.Core**~~ ✅ — Result<T>, PipelineError hierarchy (4 typed errors), 4 domain models, 5 pipeline interfaces — **DONE**
 3. **Infrastructure/Configuration** — appsettings.json, strongly-typed PipelineOptions, FieldMappingConfig, ServiceRegistration.cs
 4. **Infrastructure/OpenMeteo/ApiClient** — IWeatherApiClient implementation with IHttpClientFactory
 5. **Infrastructure/OpenMeteo/Parser** — JSON deserialization with System.Text.Json, returns Result<T>
@@ -1762,6 +1762,48 @@ public interface IWeatherDataSource
 **Why this composite exists**: The PipelineCoordinator shouldn't know about parsers or transformers — it just runs sources. Each source wires its own client → parser → transformer internally. The coordinator only sees `IWeatherDataSource.ProcessAsync()`. This is the Strategy pattern — each source implements its own strategy for getting normalized data.
 
 **Interview defense for all 5 interfaces**: "The exercise explicitly requires 'HTTP, parsing, transformation, and output are separate concerns.' My interfaces map directly: IWeatherApiClient = HTTP, IResponseParser = parsing, IDataTransformer = transformation, IOutputWriter = output. IWeatherDataSource is the composite that wires the first three together per source. Adding WeatherAPI.com means implementing these interfaces in a new feature folder — the pipeline coordinator discovers them via DI."
+
+#### 16.2.5 Phase 2 — Completion Status
+
+> **STATUS: ✅ COMPLETED — March 28, 2026**
+> - `dotnet build` → 6/6 projects succeed (Pipeline.Core types consumed by Application, Infrastructure, Console via project references)
+> - `dotnet test` → 0 tests, no errors (tests come in Phase 11)
+> - 11 new files created in Pipeline.Core: `Result.cs`, `PipelineError.cs`, 4 models, 5 interfaces
+> - ZERO NuGet dependencies in Pipeline.Core (as designed)
+> - ZERO project references in Pipeline.Core (inner circle — depends on nothing)
+> - CA1000 analyzer warning on `Result<T>` static factory methods — suppressed with `#pragma warning disable CA1000` (standard pattern for monadic types, same as `Task.FromResult`)
+
+#### 16.2.6 Phase 2 — Real-World Disclaimer (Interview Context)
+
+**Why this phase matters in production and why it's an interview talking point**:
+
+At a previous company, a data integration service was built without a core domain layer. The HTTP client classes directly returned `HttpResponseMessage` objects that were consumed throughout the codebase — the parsing logic, the transformation logic, and even the output writer all took `HttpResponseMessage` or `JObject` as parameters. When the team needed to add a second data source (a SOAP XML feed), they discovered that the entire pipeline was coupled to HTTP and JSON types. The migration required touching every file in the project. It took 4 sprints for a 6-person team, and introduced regressions because test mocks were all built around `HttpResponseMessage`.
+
+**The lesson**: The core layer defines the contracts that DECOUPLE everything else. `IWeatherApiClient` returns `Result<string>` — not `HttpResponseMessage`. `IResponseParser<TRaw>` takes a `string` — not a `JsonDocument`. `IDataTransformer<TRaw>` returns `NormalizedWeatherRecord` — not a source-specific type. These abstractions mean that when a new source uses XML, SOAP, or CSV instead of JSON, the pipeline coordinator doesn't know and doesn't care. The cost is 11 small files with ~200 total lines. The payoff is that the system's extensibility point is defined once and enforced everywhere.
+
+**The `Result<T>` decision specifically**: In that same integration service, errors were handled via `try/catch` blocks scattered across 40+ methods. When the team needed a "processing summary" feature (exactly what this exercise asks for), they had to retrofit error collection into every catch block — and discovered they'd been silently swallowing 3 different error cases. With `Result<T>`, the processing summary is built from the return values — if a method can fail, the failure is a VALUE in the return type, not a sde effect caught somewhere else.
+
+**Interview answer for "Why did you build your own Result type instead of using a library?"**:
+> "Because it's 55 lines of code with zero dependencies. LanguageExt is 900KB with hundreds of types we don't need. CSharpFunctionalExtensions still adds a dependency for what's effectively a wrapper over (T?, PipelineError?). Our Result is tailored to PipelineError — the error type is domain-specific. And the evaluator can read the entire implementation in 30 seconds, which matters for a take-home review."
+
+#### 16.2.7 Phase 2 — SOLID Principles & Patterns Demonstrated
+
+Phase 2 is where the architecture becomes concrete. The interfaces and types defined here are the backbone of every SOLID principle and pattern in the system.
+
+| Principle / Pattern | How Phase 2 Demonstrates It | Interview Talking Point |
+|--------------------|-----------------------------|------------------------|
+| **S — Single Responsibility (SRP)** | Each interface has ONE method (or one + a name property). `IWeatherApiClient` fetches. `IResponseParser` parses. `IDataTransformer` transforms. `IOutputWriter` writes. No interface does two things. | *"Each interface is named for exactly what it does. No `IWeatherService.FetchAndParseAndTransform()` god interface."* |
+| **O — Open/Closed Principle (OCP)** | Adding a new data source means implementing `IWeatherDataSource` + its sub-interfaces. Existing code is closed for modification. The coordinator doesn't change. | *"I can add WeatherAPI.com by creating 4 new classes implementing these interfaces. Zero lines changed in existing code. The Open/Closed Principle is enforced by the interface contracts."* |
+| **L — Liskov Substitution Principle (LSP)** | `IWeatherDataSource` accepts `IEnumerable<LocationConfig>` and returns `ProcessingResult`. Any implementation — OpenMeteo, WeatherApi, a mock — is substitutable without the coordinator knowing. | *"The PipelineCoordinator iterates `IEnumerable<IWeatherDataSource>`. Whether it's running 1 source or 10, the code is identical. Liskov substitution at the collection level."* |
+| **I — Interface Segregation Principle (ISP)** | 5 focused interfaces instead of 1 large one. A test mock for parsing doesn't need to implement HTTP fetching. Each consumer depends only on the interface it needs. | *"The parser test mocks `IResponseParser` — it doesn't need to implement `IWeatherApiClient`. Each interface is segregated to its concern."* |
+| **D — Dependency Inversion Principle (DIP)** | All interfaces live in Pipeline.Core (the innermost layer). Implementations will live in Pipeline.Infrastructure (the outermost layer). High-level policy depends on abstractions, not details. | *"The PipelineCoordinator in Application references IWeatherDataSource from Core. The actual OpenMeteoDataSource in Infrastructure is invisible to Application. Dependency inversion enforced by the project graph."* |
+| **Strategy Pattern** | `IWeatherDataSource` IS the Strategy interface. Each data source is a concrete strategy. The PipelineCoordinator is the context that executes strategies without knowing their implementation. | *"Classic Strategy Pattern — IWeatherDataSource defines the strategy contract, each data source provides its own strategy implementation, and the coordinator runs them all polymorphically."* |
+| **Result Pattern (ROP micro-pattern)** | `Result<T>` with `Bind` and `Map` enables Railway-Oriented error propagation. Errors are values, not exceptions. The pipeline coordinator aggregates `Result` objects to build the processing summary. | *"Errors are first-class values. A method returning `Result<T>` declares 'I can fail' in its type signature. The caller is forced to handle it — no silent failures by design."* |
+| **Record Types (Value Object Pattern)** | All 4 models and all 4 error types are `record` types — immutable, value-equality, concise. `NormalizedWeatherRecord` is a Value Object that represents a single normalized row. | *"All domain types are immutable records. A NormalizedWeatherRecord can't be accidentally mutated after creation. Value equality means two records with the same data are considered equal — essential for testing."* |
+| **Typed Error Hierarchy** | `PipelineError` → `FetchError`, `ParseError`, `TransformError`, `OutputError`. Each carries contextual data (StatusCode, Field, RecordIndex). Pattern-matchable. | *"Each error type carries contextual data specific to its stage. FetchError has StatusCode, ParseError has the Field name that failed. The processing summary formats each type differently because errors are typed, not just strings."* |
+| **Nullable Domain Modeling** | `NormalizedWeatherRecord` uses `double?` for weather fields — explicitly modeling that data can be missing. `0.0` is NOT "missing" (0°C is a valid temperature). | *"Weather data has gaps. I used nullable doubles because 0.0 is a valid temperature reading. If I used non-nullable doubles, a missing value would silently become 0.0 — an invisible data corruption bug."* |
+
+**Key insight for the interview**: Phase 2 is the phase that makes the exercise EXTENSIBLE. The evaluator will ask "how would you add a second source?" — and the answer lives entirely in these 5 interfaces. Everything else in the system is an implementation detail of these contracts.
 
 ---
 
