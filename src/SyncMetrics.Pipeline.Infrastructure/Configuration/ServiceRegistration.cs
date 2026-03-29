@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using SyncMetrics.Pipeline.Application;
 using SyncMetrics.Pipeline.Core.Interfaces;
 using SyncMetrics.Pipeline.Infrastructure.OpenMeteo;
 using SyncMetrics.Pipeline.Infrastructure.Output;
@@ -40,8 +41,8 @@ public static class ServiceRegistration
         // Phase 5 — Output writer
         services.AddSingleton<IOutputWriter, TabDelimitedFileWriter>();
 
-        // TODO: Phase 6 — Pipeline coordinator
-        // services.AddSingleton<PipelineCoordinator>();
+        // Phase 6 — Pipeline coordinator
+        services.AddSingleton<PipelineCoordinator>();
 
         return services;
     }
