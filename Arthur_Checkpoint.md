@@ -630,7 +630,7 @@ Same internal pipeline architecture. The API is just an HTTP shell. Adding a new
 
 ---
 
-### APPROACH 10: Modular Monolith with Feature Folders and Shared Kernel
+### APPROACH 10: Clean Architecture Pipeline — Single-Project with Feature-Organized Sources
 
 **Description**:  
 A single .NET 8 project organized into feature folders with a strict dependency convention. Instead of multiple projects per Clean Architecture layer, everything lives in ONE project but is organized into self-contained feature modules. A `SharedKernel/` folder holds models, interfaces, and the `Result<T>` type. Each data source is a feature folder (`Features/OpenMeteo/`, future `Features/WeatherApi/`). The pipeline coordinator lives in `Features/Pipeline/`. The output writer lives in `Features/Output/`. Internal folder boundaries enforce the same separation that multi-project Clean Architecture provides, but with zero project-reference overhead.
@@ -700,8 +700,8 @@ Adding a second source = add a new feature folder `Features/WeatherApi/` with cl
 - **Build time**: One project compiles in seconds. Four projects add restore + build overhead that matters for iteration speed during development
 - **Matches exercise complexity**: The exercise has ONE data source with 5 fields and 3 locations. That's ~50 lines of real business logic. Four projects for 50 lines of logic is ceremony. One well-organized project is proportional
 - **Tests mirror source**: `Tests/OpenMeteo/` mirrors `Features/OpenMeteo/`. Easy to find tests for any feature. Test project structure guided by source structure
-- **Staff judgment signal**: Choosing a modular monolith over multi-project Clean Architecture for a take-home shows the engineer understands that project structure should match problem complexity, not architectural dogma
-- **Still upgradeable**: If the exercise grows (unlikely), feature folders can be extracted into separate projects later. The interfaces guarantee this works. Starting multi-project and realizing it's too much is harder to walk back than starting monolith and extracting
+- **Staff judgment signal**: Choosing a single-project Clean Architecture layout over multi-project ceremony for a take-home shows the engineer understands that project structure should match problem complexity, not architectural dogma
+- **Still upgradeable**: If the exercise grows (unlikely), feature folders can be extracted into separate projects later. The interfaces guarantee this works. Starting multi-project and realizing it's too much is harder to walk back than starting lean and extracting
 - **Clean Architecture is a DEPENDENCY RULE, not a folder count**: The original Clean Architecture book by Robert C. Martin defines it as a dependency rule (outer layers depend on inner layers, never reverse). This is enforced by the `SharedKernel/Interfaces/` pattern — features depend on shared interfaces, not on each other. You can have Clean Architecture in one project
 
 **Why This Might Concern Some Evaluators**:
@@ -713,7 +713,13 @@ Adding a second source = add a new feature folder `Features/WeatherApi/` with cl
 **Docker Fit**: Simplest possible. One project, one Dockerfile stage, one image. Minimal.  
 **CI/CD Fit**: `dotnet restore → build → test`. One project makes CI the fastest of all approaches.
 
-**VERDICT: *** STRONGEST CONTENDER ***. This approach delivers the EXACT SAME interface contracts and extensibility as the 4-project Clean Architecture approach (Approach 1), but with dramatically less ceremony, faster evaluator onboarding, and a cleaner "staff judgment" signal. It shows Arthur knows that architecture is about interface boundaries and dependency rules — not about how many `.csproj` files you have.**
+**VERDICT: REJECTED — requires defensive justification that wastes interview time.** While Approach 10 delivers the same interface contracts as multi-project Clean Architecture, it forces the candidate into a defensive posture: explaining why a non-standard single-project layout IS Clean Architecture, why convention-based dependency enforcement is "good enough," and why the evaluator should look past a flat folder tree and see layers. In a Staff Engineer interview, the candidate's time is better spent discussing pipeline design, error handling strategy, and extensibility patterns — not justifying why the project structure doesn't look like what every .NET architect expects. **Approach 1 (4-project Clean Architecture) communicates the architecture instantly and requires zero explanation. The evaluator opens the solution, sees Core/Application/Infrastructure/Console, and immediately knows the dependency rules. That recognition is worth more than the `dotnet run` convenience saved by a single project.**
+
+**Why Approach 10 was initially attractive but ultimately wrong for this context**:
+- The "less ceremony" argument assumes the evaluator penalizes ceremony. In reality, for a Staff Engineer role, seeing proper layered separation is a POSITIVE signal — it shows the candidate knows how to structure production-grade codebases
+- The "same interfaces" argument is true but misses the point: interfaces in folders are invisible without reading the code. Interfaces in separate projects are visible in the Solution Explorer immediately
+- The "staff judgment" argument is circular: it claims that choosing a simpler structure shows judgment, but in an interview context, the judgment signal comes from being able to defend your architecture WITHOUT needing a paragraph of justification
+- The `dotnet run --project` "friction" is trivial — the README tells the evaluator exactly how to run it, and 4-project solutions are standard in every .NET take-home
 
 ---
 
@@ -780,7 +786,7 @@ This shows you THOUGHT about frontend, CHOSE not to build it, and can ARTICULATE
 
 | # | Approach | Extensibility | Evaluator DX | Staff Judgment Signal | Testability | Complexity vs Value | Verdict |
 |---|---------|--------------|-------------|---------------------|-------------|--------------------|---------| 
-| 1 | Clean Architecture (4 projects) | ★★★★★ | ★★★☆☆ | ★★★★☆ | ★★★★★ | Over-structured for scope | Runner-up |
+| 1 | Clean Architecture (4 projects) | ★★★★★ | ★★★★☆ | ★★★★★ | ★★★★★ | Industry standard, instantly recognized | **WINNER** |
 | 2 | Azure Functions + Durable | ★★★★☆ | ★☆☆☆☆ | ★★☆☆☆ | ★★★☆☆ | Massive overkill | Rejected |
 | 3 | MediatR / CQRS | ★★★☆☆ | ★★★☆☆ | ★★☆☆☆ | ★★★☆☆ | Semantic mismatch | Rejected |
 | 4 | Channels Producer/Consumer | ★★★☆☆ | ★★★☆☆ | ★★☆☆☆ | ★★☆☆☆ | Overkill for 3 calls | Rejected |
@@ -789,102 +795,117 @@ This shows you THOUGHT about frontend, CHOSE not to build it, and can ARTICULATE
 | 7 | Minimal API + React Frontend | ★★★★★ | ★★☆☆☆ | ★☆☆☆☆ | ★★★☆☆ | Unrequested scope, harmful | **Rejected** |
 | 8 | Functional/ROP Pipeline | ★★★★☆ | ★★★★☆ | ★★★☆☆ | ★★★★★ | Elegant but alienates readers | Adopt micro-pattern |
 | 9 | Minimal API (no frontend) | ★★★★★ | ★★☆☆☆ | ★★☆☆☆ | ★★★★☆ | Misreads "dotnet run" intent | Rejected |
-| 10 | Modular Monolith Feature Folders | ★★★★★ | ★★★★★ | ★★★★★ | ★★★★★ | Perfect proportion | **WINNER** |
+| 10 | Single-Project Feature Folders | ★★★★★ | ★★★★★ | ★★★☆☆ | ★★★★★ | Same contracts, but requires defensive justification | Rejected |
 
-### Winner: APPROACH 10 — Modular Monolith with Feature Folders and Shared Kernel
+### Winner: APPROACH 1 — Clean Architecture Console App with Pipeline + Strategy Pattern
 
-**Absorbing the Best of All Rejected Approaches**:
+**Why Approach 1 Wins — The Honest Reasoning**:
 
-| Adopted From | What We Take | How It Appears |
+The initial analysis over-indexed on "evaluator friction" (needing `--project` flag, multiple .csproj files) and under-indexed on **evaluator recognition**. After deeper reflection, the calculation flips:
+
+1. **Instant architectural recognition**: The evaluator opens the solution in Visual Studio or Rider, sees `Pipeline.Core`, `Pipeline.Application`, `Pipeline.Infrastructure`, `Pipeline.Console` — and *immediately* knows what they're looking at. No README required. No explanation needed. The project names ARE the architecture documentation. This is the single strongest advantage: **the architecture explains itself.**
+
+2. **Compile-time dependency enforcement**: In a 4-project layout, if someone tries to reference `Pipeline.Console` from `Pipeline.Core`, the compiler stops them. In a single-project approach, nothing prevents any file from importing any other file. For a Staff Engineer interview, demonstrating that you enforce architectural rules through the type system — not just convention — is a stronger signal of maturity.
+
+3. **No defensive posture in the interview**: With Approach 1, the "why this architecture?" question has a one-sentence answer: *"Clean Architecture with four layers — Core, Application, Infrastructure, Console."* Done. The evaluator nods and moves to the next question. With a single-project approach, that same question requires a paragraph defending why convention-based folder separation IS Clean Architecture. Interview time is finite — spend it discussing pipeline design, error handling, and extensibility, not justifying project structure.
+
+4. **The "ceremony" concern was overblown**: Yes, 4 projects means `dotnet run --project src/SyncMetrics.Pipeline.Console`. The README handles this in one line. Yes, 4 .csproj files means more project references to set up. But setting up project references takes 5 minutes during scaffolding and never touches the codebase again. The "ceremony" is a one-time setup cost; the **clarity** is permanent.
+
+5. **Maps directly to the exercise language**: The spec says *"HTTP, parsing, transformation, and output are separate concerns."* Four projects make those concerns **physically separate**, not just logically organized inside folders. `Pipeline.Infrastructure` contains HTTP clients and file writers. `Pipeline.Application` contains the orchestrator and transformation logic. `Pipeline.Core` contains the domain models and interfaces. The mapping from requirement language to project structure is 1:1.
+
+**Why Approach 10 Was Rejected**:
+
+Approach 10 (single-project with feature folders and SharedKernel) is architecturally sound. The interfaces are identical. The extensibility story is the same. But it has a fatal flaw for an interview context: **it requires the candidate to argue that the architecture is something the evaluator can't see at a glance.**
+
+The conversation with Approach 10 inevitably becomes:
+- "Is this Clean Architecture?" → "Yes, SharedKernel is the inner circle, Features are the outer circle..."
+- "But there's no compile-time enforcement of the dependency rule?" → "True, but for a small codebase with code review..."
+- "Couldn't a developer accidentally import from the wrong namespace?" → "Yes, but ArchUnit could enforce..."
+
+Each of those answers is technically correct. But each one burns interview time defending structural choices instead of discussing the pipeline engineering that the exercise actually evaluates. A Staff Engineer who has to convince an interviewer that their architecture IS the well-known pattern — instead of having the pattern speak for itself — is starting from a deficit.
+
+With Approach 1, the project names ARE the defense. No argument needed.
+
+**Absorbing the Best of All Rejected Approaches into Approach 1**:
+
+| Adopted From | What We Take | How It Appears in Approach 1 |
 |-------------|-------------|---------------|
-| Approach 1 (Clean Arch) | Interface contracts: IWeatherApiClient, IResponseParser, IDataTransformer, IOutputWriter, IWeatherDataSource | `SharedKernel/Interfaces/` |
-| Approach 1 (Clean Arch) | Clean Architecture dependency rule: features depend on shared kernel, not on each other | Folder convention + DI |
-| Approach 5 (Vertical Slice) | Source-specific cohesion: all Open-Meteo code in one folder | `Features/OpenMeteo/` |
-| Approach 8 (ROP) | `Result<T>` for parser and transformer returns — errors as values, no silent failures | `SharedKernel/Result.cs` used by parsers |
-| Approach 1 (Clean Arch) | Strategy pattern for data sources | `IWeatherDataSource` with DI registration |
+| Approach 5 (Vertical Slice) | Source-specific cohesion: all Open-Meteo code co-located | `Pipeline.Infrastructure/OpenMeteo/` directory |
+| Approach 8 (ROP) | `Result<T>` for parser and transformer returns — errors as values, no silent failures | `Pipeline.Core/Result.cs` |
+| Approach 1 (original) | Strategy pattern for data sources via DI | `IWeatherDataSource` with DI registration |
 | Approach 4 (Channels) | Concurrent fetching (simplified) | `Task.WhenAll` in PipelineCoordinator |
+| Approach 10 (Feature Folders) | Feature-folder organization within Infrastructure | `Pipeline.Infrastructure/OpenMeteo/` + `Pipeline.Infrastructure/Output/` |
 
-**Why Approach 10 Wins Over Approach 1 (the Previous Winner)**:
+**The Architecture in One Paragraph (Memorize for Interview)**:
 
-The previous analysis selected a hybrid of Approaches 1 + 5 (multi-project Clean Architecture). After adding four more approaches and re-evaluating with fresh eyes, Approach 10 wins because:
+> "I built a Clean Architecture pipeline with four layers: Core defines the domain models and interface contracts — IWeatherApiClient, IResponseParser, IDataTransformer, IOutputWriter — plus a Result<T> type for explicit error handling. Application contains the PipelineCoordinator that orchestrates all registered IWeatherDataSource implementations, fetches locations concurrently with Task.WhenAll, and aggregates results. Infrastructure implements the HTTP clients, JSON parsers, data transformers, and file writer — each data source lives in its own sub-folder for cohesion. Console is the entry point with DI setup and configuration binding. Adding a new data source means a new sub-folder in Infrastructure with classes implementing Core interfaces, plus one DI registration. The dependency rule is enforced by project references — Core has zero dependencies, and nothing references Console. Parsers and transformers return Result<T>, so errors are values that surface in the processing summary — no silent failures."
 
-1. **Evaluator's first 30 seconds matter**: They clone/unzip, open in IDE, see ONE `.csproj` file, type `dotnet run`, see weather data flowing. With Approach 1, they see 4 projects, need `--project` flag or must figure out which is the entry point. First impressions matter
-2. **Same interfaces, zero ceremony tax**: Every I-interface from Approach 1 exists in Approach 10. The extensibility story is identical. But there's no inter-project reference wiring, no multi-project restore, no `.sln` complexity
-3. **Test-to-source mapping is clearer**: `Tests/OpenMeteo/` → `Features/OpenMeteo/`. One mental hop. In multi-project, you need to map `Pipeline.UnitTests/Parsing/` → `Pipeline.Infrastructure/Http/OpenMeteo/`. More indirection
-4. **Build and test speed**: One project compiles and tests faster than four. For a take-home where rapid iteration matters during development, this is practical
-5. **The "Clean Architecture = many projects" misconception**: Clean Architecture is about the dependency rule, not project count. By keeping interfaces in `SharedKernel/` and features depending only on that kernel, Approach 10 IS Clean Architecture with a single deployment unit. If an evaluator challenges this, Arthur can say: *"Robert Martin's Clean Architecture defines the dependency rule — outer layers depend inward. My SharedKernel with interfaces IS the inner circle. Features are the outer circle. The rule is enforced by DI and convention, not by project boundaries. Project boundaries are a team-scaling concern, not an architecture concern."*
-
-**The Architecture in One Paragraph (Updated Interview Version)**:
-
-> "I built a modular monolith organized by feature folders with a shared kernel enforcing Clean Architecture's dependency rule. The SharedKernel defines interface contracts — IWeatherApiClient, IResponseParser, IDataTransformer, IOutputWriter — and a Result<T> type for explicit error handling. Each data source lives in its own feature folder implementing these contracts. The PipelineCoordinator orchestrates all registered IWeatherDataSource implementations, fetches locations concurrently with Task.WhenAll, and aggregates results into a tab-delimited output file. Parsers and transformers return Result<T>, so errors are values — not exceptions — and every failure surfaces in the processing summary. Adding a new source means one new feature folder and one DI registration. I chose a single-project structure over multi-project Clean Architecture because the exercise scope doesn't justify inter-project overhead — but the interface contracts are identical and would scale to multiple projects if the team or source count justified it."
-
-### Final Project Structure (Approach 10 — Modular Monolith)
+### Final Project Structure (Approach 1 — Clean Architecture)
 
 ```
 SyncMetrics.WeatherPipeline/
 ├── src/
-│   └── SyncMetrics.Pipeline/
-│       ├── SharedKernel/
-│       │   ├── Models/
-│       │   │   ├── NormalizedWeatherRecord.cs       # The unified output model
-│       │   │   ├── LocationConfig.cs                # Configurable location (name, lat, lon)
-│       │   │   ├── ProcessingResult.cs              # Success/failure result per location
-│       │   │   └── PipelineSummary.cs               # Summary of full pipeline run
-│       │   ├── Interfaces/
-│       │   │   ├── IWeatherApiClient.cs             # HTTP abstraction per source
-│       │   │   ├── IResponseParser.cs               # JSON → source-specific model
-│       │   │   ├── IDataTransformer.cs              # Source model → NormalizedWeatherRecord
-│       │   │   ├── IOutputWriter.cs                 # NormalizedWeatherRecord → tab-delimited file
-│       │   │   └── IWeatherDataSource.cs            # Composite: fetch + parse + transform for one source
-│       │   ├── Result.cs                            # Result<T> monadic type (from Approach 8 insight)
-│       │   └── PipelineError.cs                     # Typed error discriminations
-│       │
-│       ├── Features/
-│       │   ├── OpenMeteo/                           # Vertical slice for Open-Meteo source
-│       │   │   ├── OpenMeteoApiClient.cs            # IWeatherApiClient implementation
-│       │   │   ├── OpenMeteoApiResponse.cs          # Raw API response deserialization model
-│       │   │   ├── OpenMeteoResponseParser.cs       # IResponseParser → returns Result<T>
-│       │   │   ├── OpenMeteoTransformer.cs          # IDataTransformer → returns Result<T>
-│       │   │   └── OpenMeteoDataSource.cs           # IWeatherDataSource composite
-│       │   │
-│       │   ├── Pipeline/                            # Pipeline orchestration feature
-│       │   │   ├── PipelineCoordinator.cs           # Runs all sources, concurrency, builds summary
-│       │   │   └── PipelineOptions.cs               # Strongly-typed pipeline config
-│       │   │
-│       │   └── Output/                              # Output writing feature
-│       │       └── TabDelimitedFileWriter.cs        # IOutputWriter implementation
-│       │
-│       ├── Configuration/
-│       │   ├── FieldMappingConfig.cs                # Config-driven field mapping (bonus)
-│       │   └── ServiceRegistration.cs               # DI extension method — all services registered here
-│       │
-│       ├── Program.cs                               # Entry point — DI setup, config binding, run
-│       ├── appsettings.json                         # Locations, output path, field mappings
-│       └── SyncMetrics.Pipeline.csproj
+│   ├── SyncMetrics.Pipeline.Core/                  # Inner circle — ZERO dependencies on other projects
+│   │   ├── Models/
+│   │   │   ├── NormalizedWeatherRecord.cs           # The unified output model (one row per day per location)
+│   │   │   ├── LocationConfig.cs                    # Configurable location (name, lat, lon)
+│   │   │   ├── ProcessingResult.cs                  # Per-source execution result (records + errors + timing)
+│   │   │   └── PipelineSummary.cs                   # Full pipeline run summary (for console output)
+│   │   ├── Interfaces/
+│   │   │   ├── IWeatherApiClient.cs                 # HTTP abstraction: fetch raw JSON per location
+│   │   │   ├── IResponseParser.cs                   # JSON → source-specific model
+│   │   │   ├── IDataTransformer.cs                  # Source model → normalized records
+│   │   │   ├── IOutputWriter.cs                     # Normalized records → file output
+│   │   │   └── IWeatherDataSource.cs                # Composite: one source's full fetch→parse→transform
+│   │   ├── Result.cs                                # Result<T> monadic error type (~50 lines)
+│   │   └── PipelineError.cs                         # Typed error hierarchy (Fetch/Parse/Transform/Output)
+│   │
+│   ├── SyncMetrics.Pipeline.Application/            # Orchestration layer — depends ONLY on Core
+│   │   ├── PipelineCoordinator.cs                   # Runs all sources, concurrent fetch, builds summary
+│   │   └── PipelineOptions.cs                       # Strongly-typed config binding
+│   │
+│   ├── SyncMetrics.Pipeline.Infrastructure/         # Outer circle — implements Core interfaces
+│   │   ├── OpenMeteo/                               # All Open-Meteo code co-located (Vertical Slice influence)
+│   │   │   ├── OpenMeteoApiClient.cs                # IWeatherApiClient → HTTP GET with query params
+│   │   │   ├── OpenMeteoApiResponse.cs              # Deserialization model (parallel arrays)
+│   │   │   ├── OpenMeteoResponseParser.cs           # IResponseParser → returns Result<T>
+│   │   │   ├── OpenMeteoTransformer.cs              # IDataTransformer → zip arrays → normalized records
+│   │   │   └── OpenMeteoDataSource.cs               # IWeatherDataSource → composites client+parser+transformer
+│   │   ├── Output/
+│   │   │   └── TabDelimitedFileWriter.cs            # IOutputWriter → writes .tsv with header + rows
+│   │   ├── Configuration/
+│   │   │   ├── FieldMappingConfig.cs                # Config-driven field mapping model (bonus feature)
+│   │   │   └── ServiceRegistration.cs               # DI extension: AddPipelineServices()
+│   │   └── Http/
+│   │       └── ResilienceConfiguration.cs           # Retry + timeout config for HttpClient
+│   │
+│   └── SyncMetrics.Pipeline.Console/                # Entry point — depends on all layers via DI
+│       ├── Program.cs                               # Host setup, DI, config binding, run pipeline
+│       └── appsettings.json                         # Locations, output path, field mappings, source config
 │
 ├── tests/
-│   └── SyncMetrics.Pipeline.Tests/
-│       ├── OpenMeteo/
-│       │   ├── OpenMeteoResponseParserTests.cs      # Valid and malformed JSON parsing
-│       │   ├── OpenMeteoTransformerTests.cs         # Transformation logic tests
-│       │   └── TestData/                            # JSON fixture files
-│       │       ├── valid_newyork_response.json
-│       │       ├── valid_london_response.json
-│       │       ├── malformed_missing_daily.json
-│       │       ├── malformed_null_temperatures.json
-│       │       ├── malformed_mismatched_arrays.json
-│       │       └── error_response.json
-│       ├── Pipeline/
-│       │   └── PipelineCoordinatorTests.cs          # End-to-end with mocked HTTP
-│       ├── Output/
-│       │   └── TabDelimitedWriterTests.cs           # Output formatting tests
-│       ├── Http/
-│       │   └── RetryPolicyTests.cs                  # Retry logic tests
-│       └── SyncMetrics.Pipeline.Tests.csproj
+│   ├── SyncMetrics.Pipeline.UnitTests/              # Fast, isolated tests
+│   │   ├── OpenMeteo/
+│   │   │   ├── OpenMeteoResponseParserTests.cs      # Valid + malformed JSON parsing (8+ tests)
+│   │   │   ├── OpenMeteoTransformerTests.cs         # Transformation logic (6+ tests)
+│   │   │   └── TestData/                            # JSON fixture files
+│   │   │       ├── valid_response.json
+│   │   │       ├── valid_london_response.json
+│   │   │       ├── malformed_missing_daily.json
+│   │   │       ├── malformed_null_values.json
+│   │   │       ├── malformed_mismatched_arrays.json
+│   │   │       └── error_response.json
+│   │   ├── Pipeline/
+│   │   │   └── PipelineCoordinatorTests.cs          # Orchestration with mocked sources (5+ tests)
+│   │   └── Output/
+│   │       └── TabDelimitedWriterTests.cs           # Output formatting (5+ tests)
+│   │
+│   └── SyncMetrics.Pipeline.IntegrationTests/       # End-to-end with mocked HTTP
+│       └── EndToEndPipelineTests.cs                 # Full pipeline flow (3+ tests)
 │
 ├── output/
-│   └── sample/                                      # Pre-generated sample output for evaluator
-│       └── weather_data_sample.tsv
+│   └── sample/
+│       └── weather_data_sample.tsv                  # Pre-generated sample for evaluator reference
 │
 ├── README.md
 ├── AI.md
@@ -895,18 +916,18 @@ SyncMetrics.WeatherPipeline/
 └── SyncMetrics.WeatherPipeline.sln
 ```
 
-### Interface Flow Diagram (Approach 10)
+### Interface Flow Diagram (Approach 1 — Clean Architecture)
 
 ```
   ┌─────────────────────────────────────────────────────────────────┐
   │                     PipelineCoordinator                         │
-  │  (Features/Pipeline/ — orchestrates, concurrent fetch, summary) │
+  │  (Application layer — orchestrates, concurrent fetch, summary)  │
   └──────────┬──────────────────┬──────────────────┬────────────────┘
              │                  │                  │
       ┌──────▼──────┐   ┌──────▼──────┐   ┌──────▼──────┐
       │ IWeather     │   │ IWeather     │   │ IWeather     │
       │ DataSource   │   │ DataSource   │   │ DataSource   │
-      │ Features/    │   │ Features/    │   │ Features/    │
+      │ Infra/       │   │ Infra/       │   │ Infra/       │
       │ OpenMeteo/   │   │ WeatherApi/  │   │ FutureSrc/   │
       └──────┬───────┘   └─────────────┘   └─────────────┘
              │
@@ -923,25 +944,43 @@ SyncMetrics.WeatherPipeline/
                         │
                         ▼
                   IOutputWriter
-                  (Features/Output/)
+                  (Infrastructure/Output/)
                         │
                         ▼
                   Tab-delimited .tsv
 
-  ┌─────────────────────────────────────┐
-  │          SharedKernel/              │
-  │  Interfaces, Models, Result<T>,    │
-  │  PipelineError — ALL features      │
-  │  depend inward on this kernel      │
-  └─────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────┐
+  │              Pipeline.Core/                       │
+  │  Interfaces, Models, Result<T>, PipelineError    │
+  │  ZERO dependencies — the inner circle            │
+  │  Compiler enforces nothing references outward    │
+  └──────────────────────────────────────────────────┘
 ```
 
-### Pipeline Execution Flow (Updated for Result<T>)
+### Dependency Graph (Enforced by Project References)
 
 ```
-1. Program.cs loads config (appsettings.json → locations, field mappings, source settings)
-2. ServiceRegistration.cs registers all services in DI container
-3. PipelineCoordinator.RunAsync() called from Program.cs
+  Pipeline.Console  ──references──►  Pipeline.Infrastructure
+       │                                    │
+       │                                    ▼
+       └──references──►  Pipeline.Application
+                                │
+                                ▼
+                         Pipeline.Core
+                         (no references)
+
+  Illegal: Core → Application  ✗ (compiler error)
+  Illegal: Core → Infrastructure  ✗ (compiler error)
+  Illegal: Application → Console  ✗ (compiler error)
+  Illegal: Infrastructure → Console  ✗ (compiler error)
+```
+
+### Pipeline Execution Flow (Approach 1 — with Result<T>)
+
+```
+1. Program.cs (Console) loads config (appsettings.json → locations, field mappings, source settings)
+2. ServiceRegistration.cs (Infrastructure) registers all services in DI container
+3. PipelineCoordinator.RunAsync() (Application) called from Program.cs
 4. For each registered IWeatherDataSource (discovered via DI):
    a. Fetch all locations concurrently (Task.WhenAll)
       - IWeatherApiClient.FetchAsync(location) → Result<string> (raw JSON or error)
@@ -1232,7 +1271,7 @@ Max retries: 3 (4 total attempts)
 | Choice | Selected | Why |
 |--------|----------|-----|
 | **Runtime** | .NET 8 (LTS) | Latest LTS, performance, native AOT support if needed |
-| **Project structure** | Single project, feature folders + SharedKernel | Right-sized for exercise. Same interfaces as multi-project |
+| **Project structure** | 4 projects: Core, Application, Infrastructure, Console | Clean Architecture layers, dependency rule enforced by compiler |
 | **DI** | Microsoft.Extensions.DependencyInjection | Built-in, no external deps |
 | **Config** | Microsoft.Extensions.Configuration + Options pattern | Standard .NET. Strongly-typed config |
 | **HTTP** | IHttpClientFactory + HttpClient | Proper connection pooling. Handler pipeline for retry |
@@ -1252,11 +1291,11 @@ Max retries: 3 (4 total attempts)
 
 ### Q: "Why did you choose this architecture over something simpler/more complex?"
 
-> "I evaluated ten approaches ranging from Azure Durable Functions to a plugin-based system with MEF assembly loading, to a React+Vite full-stack dashboard, to Railway-Oriented functional composition. The exercise evaluates staff judgment — knowing what to generalize and what to keep simple. I chose a modular monolith with feature folders and a shared kernel because it delivers the exact same interface contracts and extensibility as a 4-project Clean Architecture solution, but without the inter-project ceremony that would be disproportionate for the exercise scope. Clean Architecture is a dependency rule, not a project count — my SharedKernel with interfaces enforces that features depend inward, never on each other."
+> "I evaluated ten approaches ranging from Azure Durable Functions to a plugin-based system with MEF assembly loading, to a React+Vite full-stack dashboard, to Railway-Oriented functional composition. The exercise evaluates staff judgment — knowing what to generalize and what to keep simple. I chose Clean Architecture with four projects — Core, Application, Infrastructure, Console — because it's the standard layered pattern that every .NET architect recognizes on sight. The dependency rule is enforced by project references, not just convention: Core has zero dependencies, Application depends only on Core, Infrastructure implements Core interfaces, and Console wires everything via DI. The project names literally are the architecture documentation."
 
 ### Q: "How would you add a second data source?"
 
-> "Create a new feature folder — say, `Features/WeatherApi/` — with its own client, parser, transformer, and data source class, all implementing the SharedKernel interfaces. Register the new IWeatherDataSource in ServiceRegistration.cs. Add a config section in appsettings.json with the source's URL, locations, and field mappings. Zero changes to existing code — the pipeline coordinator discovers all registered sources via DI."
+> "Create a new sub-folder in Infrastructure — say, `Infrastructure/WeatherApi/` — with its own client, parser, transformer, and data source class, all implementing the Core interfaces. Register the new IWeatherDataSource in ServiceRegistration.cs. Add a config section in appsettings.json with the source's URL, locations, and field mappings. Zero changes to existing code — the pipeline coordinator discovers all registered sources via DI. The new source only references Core, never other sources in Infrastructure."
 
 ### Q: "Why no database?"
 
@@ -1278,9 +1317,9 @@ Max retries: 3 (4 total attempts)
 
 > "Three things: (1) I'd add structured logging with correlation IDs per pipeline run, shipping to Application Insights or Seq. (2) For 100+ locations, I'd replace Task.WhenAll with System.Threading.Channels for backpressure-controlled streaming, or Azure Durable Functions for serverless fan-out/fan-in. (3) I'd add a circuit breaker per API source via Polly — if Open-Meteo is consistently failing, stop hammering it and fail fast while other sources continue."
 
-### Q: "Why a modular monolith instead of microservices?"
+### Q: "Why four projects instead of microservices or a single project?"
 
-> "This is a single pipeline with a single responsibility — fetch, normalize, and output weather data. Microservices make sense when you need independent deployment, different scaling profiles, or team ownership boundaries. This pipeline is one deployment unit, one team, one scaling concern. A modular monolith gives us the same interface boundaries as microservices but with zero network overhead, zero distributed tracing complexity, and zero deployment orchestration. If SyncMetrics had 10 teams each owning a different data source, I'd extract feature folders into independent services. But that's a team-scaling decision, not a technical one."
+> "This pipeline has one deployment unit and one team — microservices would add network overhead, distributed tracing, and deployment orchestration for zero benefit at this scale. On the other end, a single project would work functionally, but wouldn't enforce the dependency rule at compile time — any file could import any other file. Four projects give us the sweet spot: the compiler enforces that Core has no outward dependencies, Application can't reach Infrastructure, and Infrastructure can't reach Console. Those are real architectural guardrails, not just folder conventions. If SyncMetrics grows to many teams owning different sources, the Infrastructure sub-folders could become independent services — the Core interfaces guarantee that migration works."
 
 ### Q: "Explain your Result<T> pattern. Why not just try/catch?"
 
@@ -1308,16 +1347,16 @@ Max retries: 3 (4 total attempts)
 
 When we're ready to code, follow this order:
 
-1. **Solution & project scaffolding** — Create .sln, single src project, test project, folder structure
-2. **SharedKernel** — Result<T>, PipelineError, all interfaces, all models
-3. **Configuration** — appsettings.json, strongly-typed PipelineOptions, FieldMappingConfig, ServiceRegistration.cs
-4. **Features/OpenMeteo/ApiClient** — IWeatherApiClient implementation with IHttpClientFactory
-5. **Features/OpenMeteo/Parser** — JSON deserialization with System.Text.Json, returns Result<T>
-6. **Features/OpenMeteo/Transformer** — Source model → NormalizedWeatherRecord, returns Result<T>
-7. **Features/OpenMeteo/DataSource** — IWeatherDataSource composite wiring client + parser + transformer
-8. **Features/Output/TabDelimitedFileWriter** — IOutputWriter implementation
-9. **Features/Pipeline/PipelineCoordinator** — Orchestrate all sources, Task.WhenAll concurrency, build summary
-10. **Program.cs** — DI setup via ServiceRegistration, config binding, entry point
+1. ~~**Solution & project scaffolding**~~ ✅ — .sln, 4 src projects, 2 test projects, folder structure, project references, NuGet packages, `Directory.Build.props`, `.editorconfig`, `appsettings.json` — **DONE**
+2. **Pipeline.Core** — Result<T>, PipelineError, all interfaces, all models
+3. **Infrastructure/Configuration** — appsettings.json, strongly-typed PipelineOptions, FieldMappingConfig, ServiceRegistration.cs
+4. **Infrastructure/OpenMeteo/ApiClient** — IWeatherApiClient implementation with IHttpClientFactory
+5. **Infrastructure/OpenMeteo/Parser** — JSON deserialization with System.Text.Json, returns Result<T>
+6. **Infrastructure/OpenMeteo/Transformer** — Source model → NormalizedWeatherRecord, returns Result<T>
+7. **Infrastructure/OpenMeteo/DataSource** — IWeatherDataSource composite wiring client + parser + transformer
+8. **Infrastructure/Output/TabDelimitedFileWriter** — IOutputWriter implementation
+9. **Application/PipelineCoordinator** — Orchestrate all sources, Task.WhenAll concurrency, build summary
+10. **Console/Program.cs** — DI setup via ServiceRegistration, config binding, entry point
 11. **Tests** — Parsing (valid + malformed), transformation, output, end-to-end with mocked HTTP
 12. **Retry logic** — Polly v8 / Microsoft.Extensions.Http.Resilience on HttpClient
 13. **Config-driven field mapping** — Dynamic field mapping from appsettings.json
@@ -1331,7 +1370,7 @@ When we're ready to code, follow this order:
 
 ## 16. Detailed Implementation Plan — Phase-by-Phase Build Guide
 
-> **Purpose of this section**: This is the granular, step-by-step implementation plan that translates Approach 10 (Modular Monolith with Feature Folders + SharedKernel + Result<T>) from architectural blueprint into buildable code. Every phase includes WHAT we build, WHY we build it, HOW it maps to the evaluation criteria, and WHAT to say when defending it in the interview. Read Section 15 for the high-level roadmap; read THIS section for the implementation details.
+> **Purpose of this section**: This is the granular, step-by-step implementation plan that translates Approach 1 (Clean Architecture with 4 projects — Core + Application + Infrastructure + Console, plus Result<T> from Approach 8) from architectural blueprint into buildable code. Every phase includes WHAT we build, WHY we build it, HOW it maps to the evaluation criteria, and WHAT to say when defending it in the interview. Read Section 15 for the high-level roadmap; read THIS section for the implementation details.
 
 ### 16.0 Why We Are Creating This — The Strategic Rationale
 
@@ -1346,16 +1385,17 @@ Actabl is not testing whether Arthur can call an HTTP API or parse JSON — any 
 4. **Write meaningful tests** that cover real edge cases, not just the happy path
 5. **Exercise staff-level judgment** — knowing what to build, what NOT to build, and articulating trade-offs
 
-**Why Approach 10 Specifically**:  
-We evaluated 10 approaches exhaustively (Section 3). Approach 10 wins because:
-- It delivers **identical interface contracts and extensibility** to a 4-project Clean Architecture solution
-- It has **zero unnecessary ceremony** — one `dotnet run`, one `dotnet test`, instant evaluator onboarding
-- It shows **staff judgment**: architecture is about dependency rules and interface boundaries, not project count
+**Why Approach 1 Specifically**:  
+We evaluated 10 approaches exhaustively (Section 3). Approach 1 wins because:
+- It is **universally recognized** — any .NET evaluator opens the solution and immediately understands the architecture from the project names alone
+- The dependency rule is **enforced by the compiler** via project references — Core has zero dependencies, nothing references Console
+- It maps **1:1 to the exercise language**: the spec says "HTTP, parsing, transformation, and output are separate concerns" — four projects make those concerns physically separate
+- It requires **zero justification** in the interview — the pattern speaks for itself, leaving more time to discuss pipeline design and error handling
 - It absorbs the best micro-patterns from rejected approaches: `Result<T>` from Approach 8 (ROP), feature-folder cohesion from Approach 5 (Vertical Slice), `Task.WhenAll` concurrency from Approach 4 (Channels)
 - It avoids every over-engineering trap: no Azure Functions, no MediatR, no MEF plugins, no React frontend, no database, no web server
 
 **What Success Looks Like When We're Done**:
-- `dotnet run` → pipeline executes, fetches 3 locations concurrently, writes a `.tsv` file, prints a processing summary
+- `dotnet run --project src/SyncMetrics.Pipeline.Console` → pipeline executes, fetches 3 locations concurrently, writes a `.tsv` file, prints a processing summary
 - `dotnet test` → 25+ tests pass covering parsing (valid + malformed), transformation, output formatting, and end-to-end with mocked HTTP
 - `docker build && docker run` → same result, no .NET SDK required
 - GitHub Actions badge is green
@@ -1364,102 +1404,126 @@ We evaluated 10 approaches exhaustively (Section 3). Approach 10 wins because:
 - Every file in the codebase has a clear purpose and maps to an evaluation criterion
 
 **The One-Paragraph Architecture Statement (memorize this for the interview)**:
-> "I built a modular monolith organized by feature folders with a shared kernel enforcing Clean Architecture's dependency rule. The SharedKernel defines interface contracts — IWeatherApiClient, IResponseParser, IDataTransformer, IOutputWriter — and a Result<T> type for explicit error handling. Each data source lives in its own feature folder implementing these contracts. The PipelineCoordinator orchestrates all registered IWeatherDataSource implementations, fetches locations concurrently with Task.WhenAll, and aggregates results into a tab-delimited output file. Parsers and transformers return Result<T>, so errors are values — not exceptions — and every failure surfaces in the processing summary. Adding a new source means one new feature folder and one DI registration. I chose a single-project structure over multi-project Clean Architecture because the exercise scope doesn't justify inter-project overhead — but the interface contracts are identical and would scale to multiple projects if the team or source count justified it."
+> "I built a Clean Architecture pipeline with four layers: Core defines the domain models and interface contracts — IWeatherApiClient, IResponseParser, IDataTransformer, IOutputWriter — plus a Result<T> type for explicit error handling. Application contains the PipelineCoordinator that orchestrates all registered IWeatherDataSource implementations, fetches locations concurrently with Task.WhenAll, and aggregates results. Infrastructure implements the HTTP clients, JSON parsers, data transformers, and file writer — each data source lives in its own sub-folder for cohesion. Console is the entry point with DI setup and configuration binding. Adding a new data source means a new sub-folder in Infrastructure with classes implementing Core interfaces, plus one DI registration. The dependency rule is enforced by project references — Core has zero dependencies, and nothing references Console. Parsers and transformers return Result<T>, so errors are values that surface in the processing summary — no silent failures."
 
 ---
 
 ### 16.1 Phase 1: Solution Scaffolding
 
-**What we create**: The complete file system structure — solution file, two projects (src + tests), all folders, `.gitignore`, empty placeholder structure.
+**What we create**: The complete file system structure — solution file, four source projects (Core, Application, Infrastructure, Console), two test projects (UnitTests, IntegrationTests), all folders, `.gitignore`, project references.
 
-**Why we create it first**: The folder structure IS the architecture made visible. When the evaluator opens the repo in their IDE, the first thing they see is the folder tree. A well-organized tree communicates more about the architecture than 1000 lines of code. Feature folders, SharedKernel, Configuration — the names tell the story.
+**Why we create it first**: The folder structure IS the architecture made visible. When the evaluator opens the repo in their IDE, the first thing they see is four projects with self-explanatory names: `Pipeline.Core`, `Pipeline.Application`, `Pipeline.Infrastructure`, `Pipeline.Console`. The project names tell the architecture story before they read a single line of code. The project references enforce the dependency rule at compile time.
 
 **Complete directory tree**:
 ```
 SyncMetrics.WeatherPipeline/
 ├── src/
-│   └── SyncMetrics.Pipeline/
-│       ├── SyncMetrics.Pipeline.csproj          # .NET 8 console application
-│       ├── Program.cs                           # Entry point — DI setup, config, run
-│       ├── appsettings.json                     # All configuration (locations, mappings, sources)
-│       ├── SharedKernel/                        # Inner circle — depends on NOTHING
-│       │   ├── Models/                          # Domain models shared across all features
-│       │   │   ├── NormalizedWeatherRecord.cs   # The unified output row (one per day per location)
-│       │   │   ├── LocationConfig.cs            # A configured location (name, lat, lon)
-│       │   │   ├── ProcessingResult.cs          # Per-source execution result (records + errors + timing)
-│       │   │   └── PipelineSummary.cs           # Full pipeline run summary (for console output)
-│       │   ├── Interfaces/                      # The 5 interface contracts — pipeline stages
-│       │   │   ├── IWeatherApiClient.cs         # HTTP abstraction: fetch raw JSON per location
-│       │   │   ├── IResponseParser.cs           # JSON → source-specific model
-│       │   │   ├── IDataTransformer.cs          # Source model → normalized records
-│       │   │   ├── IOutputWriter.cs             # Normalized records → file output
-│       │   │   └── IWeatherDataSource.cs        # Composite: one source's full fetch→parse→transform
-│       │   ├── Result.cs                        # Result<T> monadic error type (~50 lines)
-│       │   └── PipelineError.cs                 # Typed error hierarchy (Fetch/Parse/Transform/Output)
-│       │
-│       ├── Features/                            # Outer circle — depends on SharedKernel only
-│       │   ├── OpenMeteo/                       # Everything for Open-Meteo lives HERE
-│       │   │   ├── OpenMeteoApiClient.cs        # IWeatherApiClient → HTTP GET with query string
-│       │   │   ├── OpenMeteoApiResponse.cs      # Deserialization model (parallel arrays)
-│       │   │   ├── OpenMeteoResponseParser.cs   # IResponseParser → JSON validation + deserialization
-│       │   │   ├── OpenMeteoTransformer.cs      # IDataTransformer → zip arrays → normalized records
-│       │   │   └── OpenMeteoDataSource.cs       # IWeatherDataSource → wires client+parser+transformer
-│       │   │
-│       │   ├── Pipeline/                        # Orchestration feature
-│       │   │   ├── PipelineCoordinator.cs       # Runs all sources, concurrent fetch, builds summary
-│       │   │   └── PipelineOptions.cs           # Strongly-typed config binding for Pipeline section
-│       │   │
-│       │   └── Output/                          # Output writing feature
-│       │       └── TabDelimitedFileWriter.cs    # IOutputWriter → writes .tsv with header + rows
-│       │
-│       └── Configuration/                       # DI registration + config binding
-│           ├── FieldMappingConfig.cs            # Config-driven field mapping model (bonus feature)
-│           └── ServiceRegistration.cs           # Single extension method: AddPipelineServices()
+│   ├── SyncMetrics.Pipeline.Core/                   # Inner circle — ZERO project references
+│   │   ├── SyncMetrics.Pipeline.Core.csproj
+│   │   ├── Models/
+│   │   │   ├── NormalizedWeatherRecord.cs
+│   │   │   ├── LocationConfig.cs
+│   │   │   ├── ProcessingResult.cs
+│   │   │   └── PipelineSummary.cs
+│   │   ├── Interfaces/
+│   │   │   ├── IWeatherApiClient.cs
+│   │   │   ├── IResponseParser.cs
+│   │   │   ├── IDataTransformer.cs
+│   │   │   ├── IOutputWriter.cs
+│   │   │   └── IWeatherDataSource.cs
+│   │   ├── Result.cs
+│   │   └── PipelineError.cs
+│   │
+│   ├── SyncMetrics.Pipeline.Application/            # References: Core only
+│   │   ├── SyncMetrics.Pipeline.Application.csproj
+│   │   ├── PipelineCoordinator.cs
+│   │   └── PipelineOptions.cs
+│   │
+│   ├── SyncMetrics.Pipeline.Infrastructure/         # References: Core, Application
+│   │   ├── SyncMetrics.Pipeline.Infrastructure.csproj
+│   │   ├── OpenMeteo/
+│   │   │   ├── OpenMeteoApiClient.cs
+│   │   │   ├── OpenMeteoApiResponse.cs
+│   │   │   ├── OpenMeteoResponseParser.cs
+│   │   │   ├── OpenMeteoTransformer.cs
+│   │   │   └── OpenMeteoDataSource.cs
+│   │   ├── Output/
+│   │   │   └── TabDelimitedFileWriter.cs
+│   │   ├── Configuration/
+│   │   │   ├── FieldMappingConfig.cs
+│   │   │   └── ServiceRegistration.cs
+│   │   └── Http/
+│   │       └── ResilienceConfiguration.cs
+│   │
+│   └── SyncMetrics.Pipeline.Console/                # References: Core, Application, Infrastructure
+│       ├── SyncMetrics.Pipeline.Console.csproj
+│       ├── Program.cs
+│       └── appsettings.json
 │
 ├── tests/
-│   └── SyncMetrics.Pipeline.Tests/
-│       ├── SyncMetrics.Pipeline.Tests.csproj    # xUnit + NSubstitute + FluentAssertions
-│       ├── OpenMeteo/                           # Tests mirror source features
-│       │   ├── OpenMeteoResponseParserTests.cs  # Valid + malformed JSON parsing (8+ tests)
-│       │   ├── OpenMeteoTransformerTests.cs     # Transformation logic tests (6+ tests)
-│       │   └── TestData/                        # JSON fixture files (versioned, realistic)
-│       │       ├── valid_response.json
-│       │       ├── valid_london_response.json
-│       │       ├── malformed_missing_daily.json
-│       │       ├── malformed_null_values.json
-│       │       ├── malformed_mismatched_arrays.json
-│       │       ├── malformed_empty_arrays.json
-│       │       └── error_response.json
-│       ├── Pipeline/
-│       │   └── PipelineCoordinatorTests.cs      # End-to-end with mocked sources (5+ tests)
-│       ├── Output/
-│       │   └── TabDelimitedWriterTests.cs       # Output formatting tests (5+ tests)
-│       └── Http/
-│           └── RetryPolicyTests.cs              # Retry logic tests (3+ tests)
+│   ├── SyncMetrics.Pipeline.UnitTests/
+│   │   ├── SyncMetrics.Pipeline.UnitTests.csproj    # References: Core, Application, Infrastructure
+│   │   ├── OpenMeteo/
+│   │   │   ├── OpenMeteoResponseParserTests.cs
+│   │   │   ├── OpenMeteoTransformerTests.cs
+│   │   │   └── TestData/
+│   │   │       ├── valid_response.json
+│   │   │       ├── valid_london_response.json
+│   │   │       ├── malformed_missing_daily.json
+│   │   │       ├── malformed_null_values.json
+│   │   │       ├── malformed_mismatched_arrays.json
+│   │   │       ├── malformed_empty_arrays.json
+│   │   │       └── error_response.json
+│   │   ├── Pipeline/
+│   │   │   └── PipelineCoordinatorTests.cs
+│   │   └── Output/
+│   │       └── TabDelimitedWriterTests.cs
+│   │
+│   └── SyncMetrics.Pipeline.IntegrationTests/
+│       ├── SyncMetrics.Pipeline.IntegrationTests.csproj
+│       └── EndToEndPipelineTests.cs
 │
-├── output/                                      # Generated at runtime — gitignored except sample
+├── output/
 │   └── sample/
-│       └── weather_data_sample.tsv              # Pre-generated sample for evaluator reference
+│       └── weather_data_sample.tsv
 │
-├── README.md                                    # Setup, how to run, architecture, trade-offs
-├── AI.md                                        # AI usage documentation (10-15 lines per spec)
-├── Dockerfile                                   # Multi-stage: build → test → publish → runtime
-├── .gitignore                                   # Standard .NET + output/ exclusions
+├── README.md
+├── AI.md
+├── Dockerfile
+├── .gitignore
 ├── .github/
 │   └── workflows/
-│       └── build-and-test.yml                   # CI: restore → build → test on ubuntu-latest
-└── SyncMetrics.WeatherPipeline.sln              # Solution file binding src + tests
+│       └── build-and-test.yml
+└── SyncMetrics.WeatherPipeline.sln
 ```
 
-**NuGet packages — src project (`SyncMetrics.Pipeline.csproj`)**:
+**Project References (the dependency rule made explicit)**:
+```
+Core              → (nothing)
+Application       → Core
+Infrastructure    → Core, Application
+Console           → Core, Application, Infrastructure
+UnitTests         → Core, Application, Infrastructure
+IntegrationTests  → Core, Application, Infrastructure, Console
+```
+
+**NuGet packages — Console project (`SyncMetrics.Pipeline.Console.csproj`)**:
 
 | Package | Version | Purpose | Why this specific package |
 |---------|---------|---------|--------------------------|
 | `Microsoft.Extensions.Hosting` | 8.0.x | DI container, configuration binding, logging, app lifecycle | Standard .NET host bootstrap. One package gives us `IServiceCollection`, `IConfiguration`, `ILogger<T>`, and `IOptions<T>`. Replaces manual wiring of 4+ separate packages |
+
+**NuGet packages — Infrastructure project (`SyncMetrics.Pipeline.Infrastructure.csproj`)**:
+
+| Package | Version | Purpose | Why this specific package |
+|---------|---------|---------|--------------------------|
 | `Microsoft.Extensions.Http` | 8.0.x | `IHttpClientFactory` for managed `HttpClient` instances | Proper connection pooling, DNS rotation, named clients. Without this, `HttpClient` leaks sockets on long-running processes |
 | `Microsoft.Extensions.Http.Resilience` | 8.x | Retry policies with exponential backoff + jitter on `HttpClient` | .NET 8 native resilience stack. Replaces raw Polly v8 wiring. Integrates directly with `IHttpClientFactory`. One line of config adds retry + circuit breaker + timeout |
+| `Microsoft.Extensions.Options.ConfigurationExtensions` | 8.0.x | Strongly-typed configuration binding | `IOptions<T>` for PipelineOptions, LocationConfig, FieldMappingConfig |
 
-**NuGet packages — test project (`SyncMetrics.Pipeline.Tests.csproj`)**:
+**NuGet packages — Core and Application projects**: No NuGet packages. These are pure C# class libraries with zero external dependencies. This is intentional — the inner layers should never depend on infrastructure concerns.
+
+**NuGet packages — test projects (`SyncMetrics.Pipeline.UnitTests.csproj` and `IntegrationTests.csproj`)**:
 
 | Package | Version | Purpose | Why this specific package |
 |---------|---------|---------|--------------------------|
@@ -1473,13 +1537,49 @@ SyncMetrics.WeatherPipeline/
 
 **Interview defense**: "Every NuGet package in the solution solves a specific, justified problem. I can explain why each one is there and why alternatives were rejected. Minimal dependency surface means faster builds, fewer security audit surfaces, and no transitive dependency surprises. A Staff Engineer should be able to justify every dependency they introduce."
 
+#### 16.1.1 Phase 1 — Completion Status
+
+> **STATUS: ✅ COMPLETED — March 28, 2026**
+> - `dotnet build SyncMetrics.WeatherPipeline.sln` → 6/6 projects succeed
+> - `dotnet test` → test infrastructure wired (0 tests yet, no errors)
+> - `dotnet run --project src/SyncMetrics.Pipeline.Console` → entry point runs
+> - All folder structure, project references, NuGet packages, and configuration in place
+
+#### 16.1.2 Phase 1 — Real-World Disclaimer (Interview Context)
+
+**Why this phase matters in production and why it's an interview talking point**:
+
+In real-world projects, getting the solution structure wrong at the start creates compounding technical debt. At a previous role, a team started a pipeline service as a single project "to move fast." Six months later, with 8 developers contributing, the project had circular dependencies between parsing logic and HTTP clients, domain models referencing database concerns, and unit tests that required live database connections because nothing was decoupled. The migration to a layered structure took 3 sprints and broke the CI pipeline for a week.
+
+**The lesson**: The 15 minutes invested in proper scaffolding saves weeks of refactoring later. The project references in this solution are not ceremony — they are **compile-time guard rails**. If a developer writes `using SyncMetrics.Pipeline.Console;` inside `Pipeline.Core`, the compiler stops them. This is cheaper than a code review comment, faster than an architecture document, and more reliable than a verbal agreement.
+
+**Interview answer for "Why did you start with scaffolding instead of just writing code?"**:  
+> "Because the folder structure IS the architecture. When the evaluator opens this repo, the first thing they see is four projects with dependency arrows that only point inward. That communicates more about the system's design than any README paragraph. I've seen teams skip this step and end up with circular dependencies that made testing impossible — the 15 minutes of scaffolding prevents weeks of technical debt."
+
+#### 16.1.3 Phase 1 — SOLID Principles & Patterns Demonstrated
+
+Even in scaffolding — before a single line of business logic — Phase 1 establishes the foundation for SOLID compliance and design patterns. Here is what the evaluator can already observe:
+
+| Principle / Pattern | How Phase 1 Demonstrates It | Interview Talking Point |
+|--------------------|-----------------------------|------------------------|
+| **S — Single Responsibility (SRP)** | Each project has ONE reason to change. Core changes when domain contracts change. Infrastructure changes when external APIs change. Console changes when startup/DI config changes. No project does double duty. | *"Each project has exactly one axis of change. Core never changes because of an HTTP library upgrade — that's Infrastructure's concern."* |
+| **O — Open/Closed Principle (OCP)** | The folder structure (`Infrastructure/OpenMeteo/`, future `Infrastructure/WeatherApi/`) shows the system is open for extension (new source = new folder) and closed for modification (existing code untouched). | *"Adding a second data source means adding a folder in Infrastructure with new implementations of Core interfaces. Zero modification to existing code."* |
+| **D — Dependency Inversion Principle (DIP)** | Project references enforce that high-level modules (Application) depend on abstractions (Core interfaces), not on low-level modules (Infrastructure). The compiler refuses any violation. | *"Application depends on Pipeline.Core, not Pipeline.Infrastructure. The dependency arrow points from concrete to abstract — enforced by the project reference graph, not by convention."* |
+| **I — Interface Segregation Principle (ISP)** | The separate `Interfaces/` folder in Core with 5 focused interfaces (IWeatherApiClient, IResponseParser, IDataTransformer, IOutputWriter, IWeatherDataSource) — each with a single responsibility — demonstrates ISP. No "god interface." | *"Five small, focused interfaces instead of one IWeatherService with 15 methods. Each implementation only needs to know about its own contract."* |
+| **L — Liskov Substitution Principle (LSP)** | The Strategy Pattern setup (IWeatherDataSource with multiple implementations) is designed for LSP: any IWeatherDataSource implementation can be swapped without affecting the PipelineCoordinator. | *"The PipelineCoordinator works with IEnumerable<IWeatherDataSource>. It doesn't know or care whether it's running OpenMeteo or WeatherApi — any implementation satisfying the interface contract is substitutable."* |
+| **Strategy Pattern** | The project structure (`Infrastructure/OpenMeteo/`, future `Infrastructure/WeatherApi/`) establishes the strategy pattern's physical layout. Each strategy (data source) lives in its own sub-folder with all its components. | *"Each data source is a strategy — a self-contained implementation of the Core interfaces. The coordinator iterates all strategies registered in DI."* |
+| **Dependency Injection (DI)** | Console's `Program.cs` uses `Host.CreateApplicationBuilder` — the foundation for constructor injection across all layers. Infrastructure will register its implementations against Core interfaces. | *"All dependencies are resolved through the DI container. No `new OpenMeteoClient()` anywhere — the container wires implementations to interfaces at startup."* |
+| **Clean Architecture (Layered Dependency Rule)** | The 4-project reference graph (Core→nothing, App→Core, Infra→Core+App, Console→all) IS Clean Architecture's dependency rule made visible and compiler-enforced. | *"The dependency rule is not a diagram in a wiki — it's enforced by MSBuild. The compiler is the architecture guardian."* |
+
+**Key insight for the interview**: These principles aren't aspirational — they're **structural**. The evaluator doesn't need to read code to verify them. They open the `.sln` in Visual Studio, expand the project references, and see the dependency graph. The architecture is self-documenting at the project level.
+
 ---
 
-### 16.2 Phase 2: SharedKernel — The Inner Circle
+### 16.2 Phase 2: Pipeline.Core — The Inner Circle
 
-**What we create**: The core types that every feature depends on. This folder is the "Domain" layer of Clean Architecture, scaled to the right size. Nothing in SharedKernel references anything in Features/ or Configuration/. The dependency arrow always points INWARD.
+**What we create**: The core types that every other project depends on. This is the Domain layer of Clean Architecture — a class library with ZERO NuGet dependencies and ZERO project references. Nothing in Pipeline.Core references anything in Application, Infrastructure, or Console. The dependency arrow always points INWARD. The compiler enforces this.
 
-**Why it matters**: The SharedKernel is what makes the architecture extensible. A new data source (Features/WeatherApi/) only needs to implement the interfaces defined here. It never needs to know about Features/OpenMeteo/. This is the Open/Closed Principle enforced at the folder level.
+**Why it matters**: Pipeline.Core is what makes the architecture extensible. A new data source (Infrastructure/WeatherApi/) only needs to implement the interfaces defined here. It never needs to know about Infrastructure/OpenMeteo/. This is the Open/Closed Principle enforced at the project level by the compiler.
 
 #### 16.2.1 `Result<T>` — Errors as Values (~50 lines of code)
 
@@ -1782,11 +1882,11 @@ public static class ServiceRegistration
 
 ---
 
-### 16.4 Phase 4: Features/OpenMeteo — The First Data Source
+### 16.4 Phase 4: Infrastructure/OpenMeteo — The First Data Source
 
-**What we create**: The complete Open-Meteo integration — 5 files implementing the SharedKernel interfaces. This is the vertical slice where all source-specific code lives.
+**What we create**: The complete Open-Meteo integration — 5 files implementing the Pipeline.Core interfaces. This is the vertical slice where all source-specific code lives, organized as a sub-folder within the Infrastructure project.
 
-**Why it's one folder**: Cohesion. A developer working on Open-Meteo integration only needs to look in `Features/OpenMeteo/`. They never navigate to a separate "Infrastructure" project for the HTTP client or a "Domain" project for the model. Everything related to Open-Meteo is colocated.
+**Why it's one sub-folder within Infrastructure**: Cohesion. A developer working on Open-Meteo integration only needs to look in `Infrastructure/OpenMeteo/`. Everything related to Open-Meteo is colocated. When adding a second source, they create `Infrastructure/WeatherApi/` — a parallel sub-folder with the same interface implementations.
 
 #### 16.4.1 `OpenMeteoApiResponse` — Deserialization Model
 
@@ -1945,9 +2045,9 @@ private async Task<Result<IReadOnlyList<NormalizedWeatherRecord>>> ProcessLocati
 
 ---
 
-### 16.5 Phase 5: Features/Output — Tab-Delimited Writer
+### 16.5 Phase 5: Infrastructure/Output — Tab-Delimited Writer
 
-**What we create**: `TabDelimitedFileWriter` implementing `IOutputWriter`.
+**What we create**: `TabDelimitedFileWriter` in `Pipeline.Infrastructure/Output/` implementing `IOutputWriter`.
 
 **Output schema**:
 ```
@@ -1985,9 +2085,9 @@ OpenMeteo	London	51.5074	-0.1278	2026-03-28	12.5	5.1	4.2	30.2	2.1	2026-03-28T14:
 
 ---
 
-### 16.6 Phase 6: Features/Pipeline — The Orchestrator
+### 16.6 Phase 6: Application — The Pipeline Orchestrator
 
-**What we create**: `PipelineCoordinator` — the central orchestrator that runs all data sources and produces the final output.
+**What we create**: `PipelineCoordinator` in `Pipeline.Application/` — the central orchestrator that runs all data sources and produces the final output.
 
 **Execution flow**:
 ```
@@ -2265,7 +2365,7 @@ Structure:
 1. **One-sentence description**: "SyncMetrics Weather Pipeline — .NET 8 ingestion pipeline that fetches, normalizes, and outputs weather forecast data"
 2. **Quick start**: `dotnet run` and `docker` commands (4 lines)
 3. **Architecture**: One paragraph + the interface flow diagram from Section 4
-4. **Extensibility**: "To add a second source: create a feature folder, implement 4 interfaces, register in DI. See Features/OpenMeteo/ as reference."
+4. **Extensibility**: "To add a second source: create a folder under Infrastructure/, implement the 4 interfaces from Core, register in DI. See Infrastructure/OpenMeteo/ as the reference implementation."
 5. **Assumptions & Trade-offs**: Bullet list of key decisions (single project vs. multi, Result<T> vs. exceptions, no database, etc.)
 6. **Testing**: `dotnet test` + what's covered
 
@@ -2308,7 +2408,7 @@ This is the order we will implement. Each step builds on the previous and result
 | Step | What | Depends on | Deliverable state after step |
 |------|------|-----------|------------------------------|
 | 1 | Solution + projects + folder structure + NuGet packages | — | Solution builds (empty) |
-| 2 | `Result<T>` + `PipelineError` | Step 1 | SharedKernel compiles |
+| 2 | `Result<T>` + `PipelineError` | Step 1 | Pipeline.Core compiles |
 | 3 | Models (`NormalizedWeatherRecord`, `LocationConfig`, `ProcessingResult`, `PipelineSummary`) | Step 2 | All models available |
 | 4 | Interfaces (all 5: `IWeatherApiClient`, `IResponseParser`, `IDataTransformer`, `IOutputWriter`, `IWeatherDataSource`) | Step 3 | Interface contracts defined |
 | 5 | Configuration: `appsettings.json` + `PipelineOptions` + `FieldMapping` + `ServiceRegistration` | Step 4 | Config binding works |
@@ -2345,7 +2445,7 @@ This is the order we will implement. Each step builds on the previous and result
 | **Database (any)** | Spec says file output. Adds dependency the evaluator must install | "IOutputWriter allows swapping to PostgreSQL or Cosmos with a single DI registration. But files are what was asked for." |
 | **ASP.NET Minimal API / web server** | Spec says `dotnet run` → execute → exit. Not `dotnet run` → server starts | "If SyncMetrics needs it as a service, wrapping PipelineCoordinator in an API with BackgroundService takes 2-3 hours." |
 | **MediatR / CQRS** | Semantic mismatch. MediatR is for request/response dispatch, not linear pipeline flow | "I considered MediatR for cross-cutting concerns but the pipeline is sequential, not dispatch-based." |
-| **Multiple .csproj layers** | Single project enforces the same dependency rule with zero inter-project ceremony | "Clean Architecture is a dependency rule, not a project count. My SharedKernel enforces inward dependencies." |
+| **Single .csproj project** | 4-project Clean Architecture gives compile-time dependency enforcement and instant evaluator recognition | "The project names are the architecture documentation. The compiler enforces the dependency rule — Core has zero references." |
 | **LanguageExt / functional libraries** | 900KB package for 50 lines of Result<T> | "Minimal dependency surface. I can implement Result<T> in 50 lines tailored to my error model." |
 | **AutoMapper** | 5 field mappings. Manual mapping is clearer and easier to debug | "AutoMapper's value is proportional to the mapping count. 5 fields don't justify the abstraction." |
 | **Serilog** | Built-in `Microsoft.Extensions.Logging` with console provider is sufficient | "Serilog adds structured logging to sinks. We only have console output. Built-in logging covers it." |
@@ -2355,6 +2455,7 @@ This is the order we will implement. Each step builds on the previous and result
 
 > **End of Checkpoint Document**  
 > Re-read Section 1 at the start of each session. When ready to implement, proceed to Section 16.12 Build Order.  
-> **10 approaches analyzed. Winner: Approach 10 — Modular Monolith with Feature Folders + SharedKernel + Result<T>.**  
+> **10 approaches analyzed. Winner: Approach 1 — Clean Architecture (4 projects: Core + Application + Infrastructure + Console) with Result<T> from Approach 8.**  
+> **Approach 10 (single-project) rejected: same contracts but requires defensive justification in interviews.**  
 > **Frontend verdict: DO NOT BUILD. This is the most important "staff judgment" call in the exercise.**  
 > **Implementation plan: 25 steps across 11 phases. Minimum viable at Step 13. Full submission at Step 25.**
