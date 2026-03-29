@@ -2891,6 +2891,903 @@ This is the order we will implement. Each step builds on the previous and result
 
 ---
 
+## 16.15 — Complete Solution Walkthrough: Architecture, Files, and How Everything Works
+
+> **Audience**: A junior developer who has never seen this codebase. You will leave this section understanding every file, every layer, why decisions were made, and how to run the solution yourself.
+
+---
+
+### 16.15.1 — What is this solution?
+
+**Purpose**: Fetch 7-day weather forecast data for a configurable list of cities from an external weather API, normalize each day's data into a unified record, and write all records to a tab-delimited (TSV) file.
+
+**The business scenario**: SyncMetrics wants to track weather data across multiple cities. Today's source is Open-Meteo (free, no API key). The solution must be designed so a second source (e.g., WeatherAPI.com) can be added without changing any existing code — only adding new code.
+
+**What the solution produces**: A file like `weather_data_20260329_142305.tsv` in an `output/` folder, containing one row per city per day:
+
+```
+Source    Location   Latitude  Longitude  Date        TempMaxC  TempMinC  PrecipitationMm  WindSpeedMaxKmh  UVIndexMax  FetchedAtUtc
+OpenMeteo New York   40.7100   -74.0059   2026-03-29  12.5      5.2       0.0              18.5             3.2         2026-03-29T14:23:05Z
+OpenMeteo London     51.5074   -0.1278    2026-03-29  9.8       4.1       2.4              22.1             2.8         2026-03-29T14:23:05Z
+OpenMeteo Tokyo      35.6762   139.6503   2026-03-29  18.2      11.3      0.0              15.4             5.1         2026-03-29T14:23:05Z
+...
+```
+
+For 3 cities and a 7-day forecast, you get **21 rows** of data.
+
+---
+
+### 16.15.2 — How to run the solution (exactly as an interviewer would)
+
+**Prerequisites**: .NET 8 SDK installed. No API keys. No database. No Docker. Internet connection to reach `api.open-meteo.com`.
+
+**Step 1 — Clone the repo and navigate to the solution root**
+```
+git clone <repo-url>
+cd Actabl
+```
+
+**Step 2 — Run the pipeline**
+```
+dotnet run --project src/SyncMetrics.Pipeline.Console
+```
+
+You will see structured log output:
+```
+info: SyncMetrics weather pipeline starting...
+info: Processing source OpenMeteo with 3 location(s)...
+info: ═══════════════════════════════════════════════
+info:   SyncMetrics Weather Pipeline — Run Summary
+info: ═══════════════════════════════════════════════
+info:   Sources processed:    1 (OpenMeteo)
+info:   Locations attempted:  3
+info:   Locations succeeded:  3
+info:   Locations failed:     0
+info:   Records written:      21
+info:   Output file:          ./output/weather_data_20260329_142305.tsv
+info:   Duration:             0.82s
+info: ═══════════════════════════════════════════════
+```
+
+The output file is placed in `output/` relative to the project directory. Open it in Excel or any text editor — the columns are tab-separated.
+
+**Step 3 — Run all tests**
+```
+dotnet test
+```
+
+Expected output:
+```
+Test summary: total: 32; failed: 0; succeeded: 32; skipped: 0
+```
+
+**Step 4 — Change the cities** (optional, to show the interviewer)  
+Open `src/SyncMetrics.Pipeline.Console/appsettings.json`, add a city:
+```json
+{ "Name": "Sydney", "Latitude": -33.8688, "Longitude": 151.2093 }
+```
+Run again. The output file will now include Sydney's 7-day forecast. No code change required.
+
+**Exit codes**: `0` = all locations succeeded. `1` = at least one location failed (logged as an error). This makes the pipeline CI-friendly — a scheduler can detect failures.
+
+---
+
+### 16.15.3 — The architecture: why 4 projects?
+
+The solution uses **Clean Architecture** (also known as Onion Architecture or Ports & Adapters). The rule is simple: **inner layers know nothing about outer layers**. Dependencies always point inward.
+
+```
+┌───────────────────────────────────────────────────────┐
+│  Console  ← entry point, wires everything with DI     │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │  Infrastructure  ← HTTP, parsers, file writing  │  │
+│  │  ┌───────────────────────────────────────────┐  │  │
+│  │  │  Application  ← orchestration logic       │  │  │
+│  │  │  ┌─────────────────────────────────────┐  │  │  │
+│  │  │  │  Core  ← contracts + models         │  │  │  │
+│  │  │  └─────────────────────────────────────┘  │  │  │
+│  │  └───────────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────┘
+```
+
+**Why does this matter in an interview?**  
+Interviewers ask: *"How would you add a second weather source?"* With Clean Architecture the answer is: *"I implement `IWeatherDataSource` in Infrastructure, register it in `ServiceRegistration.cs`, and add the config. I change zero existing files."* That is Open/Closed Principle in action.
+
+---
+
+### 16.15.4 — Project by project, file by file
+
+#### PROJECT 1: `SyncMetrics.Pipeline.Core`
+**What it is**: The innermost ring. Pure C# — zero external dependencies (no NuGet packages, no HTTP, no file I/O). Defines the contracts (interfaces) and models that all other projects agree on.
+
+**Why it exists separately**: Any project can reference Core and immediately understand the shapes of data flowing through the pipeline, without having to know anything about HTTP, JSON, or file writing.
+
+---
+
+**`Result.cs`** — The most important file in the project.
+
+```csharp
+public sealed class Result<T>
+{
+    public bool IsSuccess { get; }
+    public bool IsFailure => !IsSuccess;
+    public T Value { get; }         // only valid if IsSuccess
+    public PipelineError Error { get; }  // only valid if IsFailure
+    
+    public static Result<T> Success(T value) => new(value);
+    public static Result<T> Failure(PipelineError error) => new(error);
+    
+    public Result<TNext> Bind<TNext>(Func<T, Result<TNext>> func) { ... }
+    public Result<TNext> Map<TNext>(Func<T, TNext> func) { ... }
+}
+```
+
+**The big idea — Railway Oriented Programming**: Instead of throwing exceptions for expected failures (bad JSON, HTTP 503, file permission denied), every operation returns a `Result<T>`. If it worked, call `.Value`. If it failed, call `.Error`. The caller is forced by the compiler to think about both outcomes.
+
+The `Bind` method chains operations: if step A fails, step B is never called — the failure propagates automatically. This is why `OpenMeteoDataSource.ProcessLocationAsync` looks like:
+```csharp
+return fetchResult
+    .Bind(json => _parser.Parse(json))
+    .Bind(response => _transformer.Transform(response, location));
+```
+If `FetchAsync` returns a `FetchError`, neither the parser nor the transformer is called. The error flows through to the final summary where it gets logged.
+
+---
+
+**`PipelineError.cs`** — Defines the error hierarchy as C# `record` types.
+
+```
+PipelineError (abstract base)
+├── FetchError    — HTTP failed (status code, URL)
+├── ParseError    — JSON malformed/invalid (field, raw content snippet)
+├── TransformError — date parsing failed (field, record index)
+└── OutputError   — file write failed (file path)
+```
+
+Using `record` types means error equality works by value (useful in tests), and the named properties (`Field`, `StatusCode`, `Url`) give operators actionable context in the summary log. Contrast this with `throw new Exception("something went wrong")` — that loses all context.
+
+---
+
+**`Interfaces/IWeatherApiClient.cs`**
+```csharp
+public interface IWeatherApiClient
+{
+    string SourceName { get; }
+    Task<Result<string>> FetchAsync(LocationConfig location, CancellationToken cancellationToken);
+}
+```
+Returns raw JSON as a string. The interface doesn't say anything about HTTP — it says "give me the raw data for this location." A future implementation could read from a file and still satisfy this interface.
+
+---
+
+**`Interfaces/IResponseParser<TRaw>`**
+```csharp
+public interface IResponseParser<TRaw>
+{
+    Result<TRaw> Parse(string rawJson);
+}
+```
+Generic on `TRaw` because Open-Meteo has a different JSON shape than WeatherAPI.com. If you parse into `OpenMeteoApiResponse`, the compiler prevents you from accidentally passing it to a WeatherAPI transformer.
+
+---
+
+**`Interfaces/IDataTransformer<TRaw>`**
+```csharp
+public interface IDataTransformer<TRaw>
+{
+    Result<IReadOnlyList<NormalizedWeatherRecord>> Transform(TRaw rawData, LocationConfig location);
+}
+```
+Takes the source-specific parsed model, returns a list of `NormalizedWeatherRecord` — the universal output shape. Requires `LocationConfig` because Open-Meteo's API response doesn't include the human-readable city name.
+
+---
+
+**`Interfaces/IWeatherDataSource`**
+```csharp
+public interface IWeatherDataSource
+{
+    string SourceName { get; }
+    Task<ProcessingResult> ProcessAsync(IEnumerable<LocationConfig> locations, CancellationToken cancellationToken);
+}
+```
+This is the Strategy pattern interface. The `PipelineCoordinator` only ever sees this. It doesn't know or care whether you're calling Open-Meteo, reading a CSV file, or querying a database. Adding a source means adding one class that implements this interface.
+
+---
+
+**`Interfaces/IOutputWriter`**
+```csharp
+public interface IOutputWriter
+{
+    Task<Result<string>> WriteAsync(IReadOnlyList<NormalizedWeatherRecord> records, CancellationToken cancellationToken);
+}
+```
+Returns the output file path on success. Could be replaced with a database writer, an S3 uploader, or a Kafka producer — `PipelineCoordinator` never changes.
+
+---
+
+**`Models/NormalizedWeatherRecord.cs`** — The unified output row.
+```csharp
+public record NormalizedWeatherRecord
+{
+    public required string Source { get; init; }       // "OpenMeteo"
+    public required string Location { get; init; }     // "New York"
+    public required double Latitude { get; init; }
+    public required double Longitude { get; init; }
+    public required DateOnly Date { get; init; }       // one row per day
+    public double? TempMaxCelsius { get; init; }       // nullable — missing ≠ 0.0
+    public double? TempMinCelsius { get; init; }
+    public double? PrecipitationMm { get; init; }
+    public double? WindSpeedMaxKmh { get; init; }
+    public double? UvIndexMax { get; init; }
+    public required DateTime FetchedAtUtc { get; init; }  // audit/cache invalidation
+}
+```
+`record` gives value-equality, which makes test assertions (`record1.Should().Be(record2)`) work. `double?` (nullable) is deliberate: a missing UV index reading is different from a reading of 0. Writing `0` when data is absent is a data quality bug.
+
+---
+
+**`Models/LocationConfig.cs`** — A city entry from `appsettings.json`.
+```csharp
+public record LocationConfig
+{
+    public string Name { get; set; } = string.Empty;
+    public double Latitude { get; set; }
+    public double Longitude { get; set; }
+}
+```
+Uses mutable setters (not `init`) because `IConfiguration.Bind()` uses reflection to set properties after instantiation. The `required+init` pattern that `NormalizedWeatherRecord` uses would break the config binder.
+
+---
+
+**`Models/ProcessingResult.cs`** — Output of one data source run across all its locations.
+```csharp
+public record ProcessingResult
+{
+    public required string SourceName { get; init; }
+    public required IReadOnlyList<NormalizedWeatherRecord> Records { get; init; }
+    public required IReadOnlyList<PipelineError> Errors { get; init; }
+    public required TimeSpan Duration { get; init; }
+    public int LocationsAttempted { get; init; }
+    public int LocationsSucceeded { get; init; }
+}
+```
+Partial failure is a first-class concept: `Records` may have data for 2 cities and `Errors` may have a `FetchError` for the third. The pipeline doesn't fail entirely just because one city's API call timed out.
+
+---
+
+**`Models/PipelineSummary.cs`** — Aggregated output of the full run across all sources.
+```csharp
+public record PipelineSummary
+{
+    public required IReadOnlyList<ProcessingResult> SourceResults { get; init; }
+    public required int TotalRecordsWritten { get; init; }
+    public required TimeSpan TotalDuration { get; init; }
+    public required string? OutputFilePath { get; init; }
+    
+    public bool HasErrors => SourceResults.Any(r => r.Errors.Count > 0);
+    public IEnumerable<PipelineError> AllErrors => SourceResults.SelectMany(r => r.Errors);
+}
+```
+`HasErrors` drives the process exit code. `OutputFilePath` is `null` if all sources failed and there was nothing to write.
+
+---
+
+#### PROJECT 2: `SyncMetrics.Pipeline.Application`
+**What it is**: The orchestration layer. Depends on Core only. Contains one class.
+
+**Why it's a separate project from Infrastructure**: The coordinator's job is sequencing and aggregating. It should not know how HTTP works, how JSON parsing works, or how files get written. If you put the coordinator in the Infrastructure project, you'd be mix-and-matching concerns that should be separated. A project boundary enforces that separation — you physically cannot accidentally import `System.Net.Http` from the Application layer because the Application `.csproj` doesn't reference it.
+
+---
+
+**`PipelineCoordinator.cs`** — The brain of the pipeline.
+
+```csharp
+public sealed partial class PipelineCoordinator
+{
+    private readonly IEnumerable<IWeatherDataSource> _dataSources;
+    private readonly IOutputWriter _outputWriter;
+    private readonly ILogger<PipelineCoordinator> _logger;
+    
+    public async Task<PipelineSummary> RunAsync(
+        IReadOnlyDictionary<string, IReadOnlyList<LocationConfig>> sourceLocations,
+        CancellationToken cancellationToken)
+    {
+        // 1. Fire all data sources concurrently
+        var tasks = _dataSources.Select(source => source.ProcessAsync(...));
+        var sourceResults = await Task.WhenAll(tasks);
+        
+        // 2. Aggregate all successful records from all sources
+        var allRecords = sourceResults.SelectMany(r => r.Records).ToList();
+        
+        // 3. Write if there's anything to write
+        if (allRecords.Count > 0)
+            await _outputWriter.WriteAsync(allRecords, cancellationToken);
+        
+        // 4. Return full summary (used for exit code and logging)
+        return new PipelineSummary { ... };
+    }
+}
+```
+
+**Key design decisions:**
+
+1. **`Task.WhenAll`**: All sources run concurrently. If you have 3 cities across 2 sources, 6 HTTP requests fire simultaneously. This is 5–8× faster than sequential processing.
+
+2. **`IEnumerable<IWeatherDataSource>`**: The DI container injects ALL registered implementations. To add a second source (WeatherAPI.com), register it in `ServiceRegistration.cs`. The coordinator's `Select` loop picks it up automatically — no code changes to the coordinator.
+
+3. **Coordinator receives the source→locations map as a parameter** (not by reading config directly). This keeps the coordinator free of Infrastructure config types and makes `PipelineCoordinatorTests` possible without touching the filesystem.
+
+4. **`partial class` with `[LoggerMessage]`**: The logging uses C# source generator attributes. Instead of `_logger.LogInformation($"Processing {sourceName}")`, we have:
+   ```csharp
+   [LoggerMessage(Level = LogLevel.Information, Message = "Processing source {Source} with {Count} location(s)...")]
+   private static partial void LogProcessingSource(ILogger logger, string source, int count);
+   ```
+   The compiler generates the logging method at build time. This satisfies code analyzer rules CA1848 and CA1873 (avoid boxed allocations in hot-path logging) and enforces structured logging — `{Source}` and `{Count}` are searchable properties in log aggregation tools.
+
+---
+
+#### PROJECT 3: `SyncMetrics.Pipeline.Infrastructure`
+**What it is**: All the "messy reality" — HTTP, JSON, file I/O. Implements the interfaces defined in Core. No interface definitions here, only implementations.
+
+---
+
+**`Configuration/PipelineOptions.cs`** — Strongly-typed configuration class.
+
+```csharp
+public class PipelineOptions
+{
+    public const string SectionName = "Pipeline";
+    public string OutputDirectory { get; set; } = "./output";
+    public string OutputFilePattern { get; set; } = "weather_data_{timestamp}.tsv";
+    public List<SourceOptions> Sources { get; set; } = new();
+}
+
+public class SourceOptions
+{
+    public string Name { get; set; }
+    public bool Enabled { get; set; } = true;
+    public string BaseUrl { get; set; }
+    public int TimeoutSeconds { get; set; } = 30;
+    public int RetryCount { get; set; } = 3;
+    public List<LocationConfig> Locations { get; set; } = new();
+    public List<FieldMapping> FieldMappings { get; set; } = new();
+}
+```
+
+Everything in `appsettings.json` under `"Pipeline"` is bound to this class via the Options pattern. Using `IOptions<PipelineOptions>` instead of `IConfiguration` directly means classes that need config get a typed object — not a string dictionary — eliminating key-typo runtime bugs.
+
+---
+
+**`Configuration/ServiceRegistration.cs`** — The single DI wiring class.
+
+```csharp
+public static IServiceCollection AddPipelineServices(
+    this IServiceCollection services,
+    IConfiguration configuration)
+{
+    // Bind config
+    services.Configure<PipelineOptions>(configuration.GetSection("Pipeline"));
+    
+    // HTTP client with resilience pipeline (retry + timeout + circuit breaker)
+    services.AddHttpClient("OpenMeteo", client => {
+        client.BaseAddress = new Uri("https://api.open-meteo.com/v1/forecast");
+        client.Timeout = TimeSpan.FromSeconds(30);
+    }).AddStandardResilienceHandler();
+
+    // Open-Meteo pipeline components
+    services.AddSingleton<IWeatherApiClient, OpenMeteoApiClient>();
+    services.AddSingleton<IResponseParser<OpenMeteoApiResponse>, OpenMeteoResponseParser>();
+    services.AddSingleton<IDataTransformer<OpenMeteoApiResponse>, OpenMeteoTransformer>();
+    services.AddSingleton<IWeatherDataSource, OpenMeteoDataSource>();
+    
+    // Output
+    services.AddSingleton<IOutputWriter, TabDelimitedFileWriter>();
+    
+    // Coordinator
+    services.AddSingleton<PipelineCoordinator>();
+    
+    return services;
+}
+```
+
+**`AddStandardResilienceHandler()`** is a single method call that configures:
+- Automatic **retry** on 5xx responses (3 attempts, exponential backoff with jitter)
+- **Timeout** per request
+- **Circuit breaker** (if too many requests fail in a time window, stop sending to protect the downstream service)
+
+This is from `Microsoft.Extensions.Http.Resilience` (built on Polly). The retry policy lives on the HTTP client pipeline — not inside `OpenMeteoApiClient`. This is important: `OpenMeteoApiClient` just calls `GetAsync`. It doesn't know retries are happening. This is the **Open/Closed Principle** applied to resilience: adding retry behavior required zero changes to `OpenMeteoApiClient`.
+
+---
+
+**`OpenMeteo/OpenMeteoApiResponse.cs`** — The JSON deserialization model (DTO).
+
+```csharp
+public class OpenMeteoApiResponse
+{
+    [JsonPropertyName("latitude")]  public double Latitude { get; set; }
+    [JsonPropertyName("longitude")] public double Longitude { get; set; }
+    [JsonPropertyName("daily")]     public OpenMeteoDailyData? Daily { get; set; }
+    [JsonPropertyName("error")]     public bool Error { get; set; }
+    [JsonPropertyName("reason")]    public string? Reason { get; set; }
+    // ...
+}
+
+public class OpenMeteoDailyData
+{
+    [JsonPropertyName("time")]               public List<string>? Time { get; set; }
+    [JsonPropertyName("temperature_2m_max")] public List<double?>? TemperatureMax { get; set; }
+    [JsonPropertyName("wind_speed_10m_max")] public List<double?>? WindSpeedMax { get; set; }
+    // ... all other fields
+}
+```
+
+This is a **DTO (Data Transfer Object)** — its only job is to mirror the JSON structure so `JsonSerializer.Deserialize<OpenMeteoApiResponse>()` works. It knows nothing about business logic.
+
+**Important caught discrepancy**: The exercise brief uses `windspeed_10m_max` in the example URL. The actual Open-Meteo API uses `wind_speed_10m_max` (with underscore). This was caught by consulting the live API documentation. The correct value is used in `OpenMeteoApiClient.DailyFields`.
+
+Open-Meteo's format is a **parallel array structure**: instead of one object per day, it has one array per field, all the same length. Index 0 across all arrays = day 1, index 1 = day 2, etc. This is common in time-series APIs because it compresses well and is efficient to process.
+
+---
+
+**`OpenMeteo/OpenMeteoApiClient.cs`** — The HTTP client.
+
+```csharp
+public sealed class OpenMeteoApiClient : IWeatherApiClient
+{
+    private static readonly string[] DailyFields = [
+        "temperature_2m_max", "temperature_2m_min", "precipitation_sum",
+        "wind_speed_10m_max", "uv_index_max"
+    ];
+    
+    public async Task<Result<string>> FetchAsync(LocationConfig location, CancellationToken ct)
+    {
+        var url = $"?latitude={lat}&longitude={lon}&daily={daily}&timezone=auto&forecast_days=7";
+        
+        using var response = await client.GetAsync(url, ct);
+        var json = await response.Content.ReadAsStringAsync(ct);
+        
+        if (!response.IsSuccessStatusCode)
+            return Result<string>.Failure(new FetchError(...));
+        
+        return Result<string>.Success(json);
+    }
+}
+```
+
+The URL is constructed with `InvariantCulture` for latitude/longitude — critical because `40.7128.ToString()` in a German locale produces `"40,7128"` (comma decimal separator), which the API rejects. `InvariantCulture` always produces `"40.7128"`.
+
+The method reads the full JSON body even on error responses, because Open-Meteo returns error details in the body: `{"error": true, "reason": "Invalid parameter: latitude"}`. Those details are useful for logging.
+
+`cancellationToken.IsCancellationRequested` is re-thrown rather than caught — respecting the caller's cancellation is a contract, not a courtesy.
+
+---
+
+**`OpenMeteo/OpenMeteoResponseParser.cs`** — JSON deserialization + structural validation.
+
+This class follows the **"parse, don't validate"** principle: if `Parse()` returns `Success`, the returned object is guaranteed to be structurally sound. The transformer never needs to null-check anything.
+
+Validation steps (in order):
+1. `JsonSerializer.Deserialize` — returns `ParseError` with snippet if JSON is malformed
+2. `response.Error == true` — Open-Meteo returns `{"error": true, "reason": "..."}` for API errors (bad coordinates, etc.)
+3. `response.Daily is null` — the `daily` object was not returned
+4. `daily.Time is null or empty` — no time array = no data
+5. **Array length checks** for all 5 measurement arrays — each array must have exactly the same length as `time`. If `temperature_2m_max` has 6 elements and `time` has 7, indexing by `i` would silently skip the last day. This is caught here.
+
+The parser names the specific offending field in the `ParseError`. An operator seeing `"temperature_2m_max has 6 elements but 'time' has 7"` can act on it immediately.
+
+---
+
+**`OpenMeteo/OpenMeteoTransformer.cs`** — Array-to-records conversion.
+
+```csharp
+public Result<IReadOnlyList<NormalizedWeatherRecord>> Transform(
+    OpenMeteoApiResponse rawData, LocationConfig location)
+{
+    var daily = rawData.Daily!;  // Parser guarantees non-null
+    var records = new NormalizedWeatherRecord[daily.Time!.Count];
+    
+    for (var i = 0; i < daily.Time.Count; i++)
+    {
+        if (!DateOnly.TryParse(daily.Time[i], out var date))
+            return Result<...>.Failure(new TransformError(...));
+        
+        records[i] = new NormalizedWeatherRecord
+        {
+            Source = "OpenMeteo",
+            Location = location.Name,         // from config, not from API response
+            Latitude = rawData.Latitude,      // from API response
+            Date = date,
+            TempMaxCelsius = daily.TemperatureMax![i],  // null-safe: parser validated length
+            // ...
+            FetchedAtUtc = DateTime.UtcNow,   // audit trail
+        };
+    }
+    
+    return Result<...>.Success(records);
+}
+```
+
+The `!` null-forgiving operators (`daily.Time!`, `daily.TemperatureMax!`) are valid because the parser contract guarantees these are non-null when `Parse()` returns `Success`. The analyzer would complain without them because it can't see across the parser/transformer boundary.
+
+`Location` comes from the config (`location.Name`) not from the API response, because Open-Meteo doesn't return a city name — it returns the coordinates it snapped the query to (which may differ slightly from the requested coordinates).
+
+---
+
+**`OpenMeteo/OpenMeteoDataSource.cs`** — The Strategy pattern composite.
+
+```csharp
+public sealed class OpenMeteoDataSource : IWeatherDataSource
+{
+    public async Task<ProcessingResult> ProcessAsync(
+        IEnumerable<LocationConfig> locations, CancellationToken ct)
+    {
+        // Concurrent: fires all location fetches simultaneously
+        var tasks = locationList.Select(loc => ProcessLocationAsync(loc, ct));
+        var results = await Task.WhenAll(tasks);
+        
+        // Separate successes from failures
+        foreach (var result in results)
+        {
+            if (result.IsSuccess) records.AddRange(result.Value);
+            else                  errors.Add(result.Error);
+        }
+        
+        return new ProcessingResult { Records = records, Errors = errors, ... };
+    }
+    
+    private async Task<Result<IReadOnlyList<NormalizedWeatherRecord>>> ProcessLocationAsync(
+        LocationConfig location, CancellationToken ct)
+    {
+        var fetchResult = await _apiClient.FetchAsync(location, ct);
+        
+        // Railway: if fetch fails, Parse never runs; if Parse fails, Transform never runs
+        return fetchResult
+            .Bind(json => _parser.Parse(json))
+            .Bind(response => _transformer.Transform(response, location));
+    }
+}
+```
+
+**`Task.WhenAll` concurrency**: All 3 city requests fire simultaneously. The Open-Meteo API allows this. If each individual request takes 300ms, all 3 complete in ~300ms total instead of ~900ms sequential. For 10 cities you still complete in roughly one request's worth of time.
+
+**Partial failure semantics**: If London's request returns a 503, `errors` gets a `FetchError("London")`. New York and Tokyo still populate `records`. The pipeline writes 14 records (2 cities × 7 days) and logs the London failure. The exit code becomes `1`. Contrast this with throwing an exception that aborts everything.
+
+---
+
+**`Output/TabDelimitedFileWriter.cs`** — TSV file writing.
+
+```csharp
+public async Task<Result<string>> WriteAsync(
+    IReadOnlyList<NormalizedWeatherRecord> records, CancellationToken ct)
+{
+    Directory.CreateDirectory(_options.OutputDirectory);
+    
+    var fileName = _options.OutputFilePattern.Replace(
+        "{timestamp}", 
+        DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture));
+    
+    var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);  // UTF-8 no BOM
+    
+    await using var writer = new StreamWriter(filePath, append: false, encoding);
+    
+    await writer.WriteLineAsync(string.Join('\t', HeaderColumns));
+    
+    foreach (var record in records)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await writer.WriteLineAsync(string.Join('\t', ...));
+    }
+    
+    return Result<string>.Success(filePath);
+}
+```
+
+**TSV vs CSV**: Weather data can contain commas in location/timezone names. Tabs are not valid characters in any meteorology field, making TSV unambiguous without quoting rules.
+
+**UTF-8 without BOM**: The `encoderShouldEmitUTF8Identifier: false` removes the 3-byte BOM (Byte Order Mark) that Windows programs sometimes prepend. BOM causes issues when the file is processed by Python, bash, or Linux tools. "No BOM" is the universal interoperability default.
+
+**`InvariantCulture` on all numbers**: `record.Latitude.ToString("F4", CultureInfo.InvariantCulture)` always produces `"40.7128"` regardless of the OS locale. If you omit this, a French Windows machine produces `"40,7128"` (comma decimal), breaking every downstream tool that reads the file.
+
+**`null` → empty string**: `double?` null values become an empty field in TSV, not the string `"null"` or `"0"`. A consumer reading the file knows an empty cell means "no data available" and can distinguish between "UV index was 0.0" and "UV index was not reported."
+
+**Timestamp in filename**: `weather_data_20260329_142305.tsv`. Every run creates a new file. No data is overwritten. This is a safe default for a pipeline that might run on a schedule — you can replay runs and compare outputs.
+
+---
+
+#### PROJECT 4: `SyncMetrics.Pipeline.Console`
+**What it is**: The entry point. Wires everything together with the .NET Generic Host, reads config, and runs the coordinator.
+
+---
+
+**`Program.cs`** — 35 lines. Does exactly five things:
+
+```csharp
+// 1. Build the Generic Host (config system, DI container, logging)
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+{
+    ContentRootPath = AppContext.BaseDirectory,  // find appsettings.json reliably
+    Args = args,
+});
+
+// 2. Register all pipeline services
+builder.Services.AddPipelineServices(builder.Configuration);
+
+var app = builder.Build();
+
+// 3. Resolve coordinator and config from DI
+var coordinator = app.Services.GetRequiredService<PipelineCoordinator>();
+var options = app.Services.GetRequiredService<IOptions<PipelineOptions>>().Value;
+
+// 4. Build source→locations map from config
+var sourceLocations = options.Sources
+    .Where(s => s.Enabled)                        // respect Enabled flag
+    .ToDictionary(s => s.Name, s => (IReadOnlyList<LocationConfig>)s.Locations);
+
+// 5. Handle Ctrl+C gracefully, run the pipeline, return exit code
+Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+var summary = await coordinator.RunAsync(sourceLocations, cts.Token);
+return summary.HasErrors ? 1 : 0;
+```
+
+`ContentRootPath = AppContext.BaseDirectory` ensures `appsettings.json` is found in the correct place regardless of whether you run with `dotnet run --project src/SyncMetrics.Pipeline.Console` from the repo root or by double-clicking the compiled binary.
+
+The `CancelKeyPress` handler converts Ctrl+C into a `CancellationToken` cancellation. Every `async` method in the pipeline accepts and forwards the token. This means pressing Ctrl+C during a run causes the pipeline to stop cleanly after the current write (if mid-write) rather than corrupting the output file.
+
+---
+
+**`appsettings.json`** — The sole configuration file.
+
+```json
+{
+  "Pipeline": {
+    "OutputDirectory": "./output",
+    "OutputFilePattern": "weather_data_{timestamp}.tsv",
+    "Sources": [
+      {
+        "Name": "OpenMeteo",
+        "Enabled": true,
+        "BaseUrl": "https://api.open-meteo.com/v1/forecast",
+        "TimeoutSeconds": 30,
+        "RetryCount": 3,
+        "Locations": [
+          { "Name": "New York", "Latitude": 40.7128, "Longitude": -74.0060 },
+          { "Name": "London",   "Latitude": 51.5074, "Longitude": -0.1278 },
+          { "Name": "Tokyo",    "Latitude": 35.6762, "Longitude": 139.6503 }
+        ],
+        "FieldMappings": [
+          { "SourceField": "temperature_2m_max", "OutputColumn": "TempMaxC",      "Unit": "°C"    },
+          { "SourceField": "wind_speed_10m_max", "OutputColumn": "WindSpeedMaxKmh","Unit": "km/h"  },
+          { "SourceField": "uv_index_max",       "OutputColumn": "UVIndexMax",    "Unit": "index" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**`FieldMappings`** is a documentation registry — it records the canonical source-to-output column correspondence for operators who maintain the config. The actual wiring is type-safe in code (`OpenMeteoApiClient.DailyFields`, `OpenMeteoTransformer` assignments, `TabDelimitedFileWriter.HeaderColumns`). Adding `"Enabled": false` to the source disables it entirely — the coordinator's `Where(s => s.Enabled)` filter skips it.
+
+---
+
+**`Directory.Build.props`** — Solution-wide quality gate applied to every project automatically.
+
+```xml
+<PropertyGroup>
+  <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  <AnalysisLevel>latest-recommended</AnalysisLevel>
+  <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+</PropertyGroup>
+```
+
+`TreatWarningsAsErrors=true` means the CI build fails on any unused variable, nullable reference type warning, or code style violation. This is production-standard — it prevents warning accumulation that hides real issues. Zero warnings is enforced at every commit.
+
+---
+
+### 16.15.5 — The test suite: 32 tests, what they test and why
+
+**Test philosophy**: Each test class lives in isolation. Unit tests stub every dependency. Integration tests use the real DI container. No test ever hits a real network.
+
+---
+
+**`OpenMeteoResponseParserTests.cs`** (10 tests) — Unit tests for the parser.
+
+Fixtures are JSON files embedded in the test assembly (`EmbeddedResource` in the .csproj). This eliminates file-path fragility — the tests work identically on any OS in any working directory.
+
+| Test | What it proves |
+|---|---|
+| `Parse_ValidSevenDayResponse_ReturnsSuccess` | Happy path: all 7 days, all fields populated |
+| `Parse_ApiErrorResponse_ReturnsParseError` | Open-Meteo `{"error":true,"reason":"..."}` is caught |
+| `Parse_MissingDailyObject_ReturnsParseError` | Missing `daily` key is caught |
+| `Parse_NullArrayValues_ReturnsSuccess` | `null` values inside arrays are valid (missing readings) |
+| `Parse_MismatchedArrayLengths_ReturnsParseError` | Array length mismatch names the offending field |
+| `Parse_InvalidJson_ReturnsParseErrorWithInvalidJsonMessage` | Malformed JSON is caught |
+| `Parse_ValidLondonResponse_ReturnsSuccessWithNegativeLongitude` | Negative longitude coordinates parse correctly |
+| `Parse_EmptyTimeArray_ReturnsParseError` | Zero-length time array is rejected |
+
+---
+
+**`OpenMeteoTransformerTests.cs`** (6 tests) — Unit tests for the transformer.
+
+| Test | What it proves |
+|---|---|
+| `Transform_ValidResponse_ReturnsCorrectRecordCount` | 7 days in → 7 records out |
+| `Transform_ValidResponse_MapsSourceCorrectly` | `Source` field is `"OpenMeteo"` |
+| `Transform_ValidResponse_MapsLocationNameFromConfig` | `Location` comes from config, not from API |
+| `Transform_NullMeasurements_RetainsNullsInRecord` | `null?` values pass through without becoming 0 |
+| `Transform_ValidResponse_SetsLatLongFromResponse` | Coordinates come from API response, not from config |
+| `Transform_UnparsableDate_ReturnsTransformError` | Corrupt date string returns `TransformError` with index |
+
+---
+
+**`TabDelimitedWriterTests.cs`** (5 tests) — Unit tests for the file writer.
+
+| Test | What it proves |
+|---|---|
+| `WriteAsync_ValidRecords_CreatesFile` | File is created at configured path |
+| `WriteAsync_ValidRecords_WritesHeaderRow` | Header matches the defined column order |
+| `WriteAsync_NullMeasurement_WritesEmptyCell` | `null` → empty cell (not `"null"` or `"0"`) |
+| `WriteAsync_ValidRecords_UsesInvariantCulture` | `40.71` not `40,71` (locale-independent decimal) |
+| `WriteAsync_ExistingDirectory_DoesNotThrow` | Idempotent directory creation |
+
+---
+
+**`PipelineCoordinatorTests.cs`** (5 tests) — Unit tests for the coordinator.
+
+These tests use **NSubstitute** to create fakes for `IWeatherDataSource` and `IOutputWriter`. The coordinator is tested purely as an orchestrator — none of the real infrastructure runs.
+
+| Test | What it proves |
+|---|---|
+| `RunAsync_SingleSourceSuccess_ReturnsSummaryWithRecords` | Normal path: records written, summary populated |
+| `RunAsync_SourceReturnsErrors_SurfacesErrorsInSummary` | Errors appear in summary without aborting |
+| `RunAsync_AllRecordsEmpty_DoesNotCallWriter` | Writer is not called when there's nothing to write |
+| `RunAsync_WriterFails_SummaryHasNullOutputPath` | Writer failure is captured, not thrown |
+| `RunAsync_MultipleSourcesRun_DurationIsPositive` | Duration is measured |
+
+---
+
+**`RetryPolicyTests.cs`** (3 tests) — Unit tests for the HTTP resilience pipeline.
+
+These tests use `MockHttpMessageHandler` — a custom `HttpMessageHandler` subclass that serves responses from a `Queue<HttpResponseMessage>`. The real `AddStandardResilienceHandler()` pipeline is exercised; only the network is replaced. Zero delay is configured so the tests run in milliseconds.
+
+| Test | What it proves |
+|---|---|
+| `RetryPolicy_TransientFailureThenSuccess_ReturnsSuccessAfterRetry` | 503 → 200: retry fires, final result is success |
+| `RetryPolicy_PermanentFailure_DoesNotRetry` | 400: only 1 HTTP call made, no retry |
+| `RetryPolicy_ExhaustsMaxAttempts_ReturnsFetchErrorAfterFourRequests` | 500×4: exactly 4 calls (1 + 3 retries) |
+
+The `CallCount` assertion is the critical one: it proves the retry policy fired the right number of times, not just that the final `Result` had the right value. `CallCount == 2` proves a retry happened; `CallCount == 1` proves no retry was attempted.
+
+---
+
+**`EndToEndPipelineTests.cs`** (3 tests) — Integration tests using the real DI container.
+
+These are the most valuable tests because they catch composition bugs. The full production DI graph is constructed: real `OpenMeteoResponseParser`, real `OpenMeteoTransformer`, real `TabDelimitedFileWriter`. Only `IWeatherApiClient` is substituted (NSubstitute).
+
+| Test | What it proves |
+|---|---|
+| `FullPipeline_WithValidApiResponse_ProducesPopulatedOutputFile` | 7-day response → file with 7 rows, no errors |
+| `FullPipeline_WithApiErrorResponse_ProducesZeroRecordsAndSurfacesError` | HTTP 503 result → `HasErrors == true`, 0 records |
+| `FullPipeline_ThreeLocations_ProducesTwentyOneRecordsTotal` | 3 locations × 7 days = 21 records |
+
+Tests write to a `Guid`-named temp directory and clean up in `Dispose()`. They never leave files on disk.
+
+---
+
+### 16.15.6 — The data flow: one request from start to finish
+
+Here is the complete journey of a single city's data through the pipeline:
+
+```
+Program.cs
+  │
+  │  RunAsync({"OpenMeteo": [NewYork, London, Tokyo]})
+  ▼
+PipelineCoordinator
+  │
+  │  Task.WhenAll([OpenMeteoDataSource.ProcessAsync])
+  ▼
+OpenMeteoDataSource
+  │
+  │  Task.WhenAll([ProcessLocationAsync(NewYork), ProcessLocationAsync(London), ProcessLocationAsync(Tokyo)])
+  │
+  │  ProcessLocationAsync(NewYork):
+  │    ┌─────────────────────────────────────────────────────────────────────────┐
+  │    │  OpenMeteoApiClient.FetchAsync(NewYork)                                 │
+  │    │    → GET https://api.open-meteo.com/v1/forecast?latitude=40.7128&...    │
+  │    │    ← HTTP 200 + JSON string                                             │
+  │    │    → Result<string>.Success(json)                                       │
+  │    │                                                                         │
+  │    │  .Bind(json => OpenMeteoResponseParser.Parse(json))                     │
+  │    │    → Validate JSON structure (null checks, array lengths)               │
+  │    │    → Result<OpenMeteoApiResponse>.Success(response)                     │
+  │    │                                                                         │
+  │    │  .Bind(response => OpenMeteoTransformer.Transform(response, NewYork))   │
+  │    │    → "Zip" parallel arrays by index i=0..6                              │
+  │    │    → Create NormalizedWeatherRecord[7]                                  │
+  │    │    → Result<IReadOnlyList<NormalizedWeatherRecord>>.Success(records)    │
+  │    └─────────────────────────────────────────────────────────────────────────┘
+  │
+  │  Aggregate: records[0..6] (NY) + records[7..13] (London) + records[14..20] (Tokyo)
+  │  → ProcessingResult { Records = 21 records, Errors = [] }
+  │
+  ▼
+PipelineCoordinator continues:
+  │  allRecords = 21 NormalizedWeatherRecord
+  │
+  │  TabDelimitedFileWriter.WriteAsync(allRecords)
+  │    → Create ./output/weather_data_20260329_142305.tsv
+  │    → Write header row
+  │    → Write 21 data rows (InvariantCulture, null → empty)
+  │    → Result<string>.Success("./output/weather_data_20260329_142305.tsv")
+  │
+  ▼
+PipelineSummary { TotalRecordsWritten=21, HasErrors=false, OutputFilePath="./output/..." }
+  │
+  ▼
+Program.cs: return 0  (exit code 0 = success)
+```
+
+**What happens if London's request times out:**
+```
+ProcessLocationAsync(London):
+  OpenMeteoApiClient.FetchAsync(London)
+    → GET ... [times out after 30s]
+    → AddStandardResilienceHandler retries 3 times
+    → All 4 attempts fail
+    → Result<string>.Failure(new FetchError("HTTP request failed...", "London"))
+
+  .Bind(json => ...) — NEVER CALLED (fetchResult is Failure)
+  .Bind(response => ...) — NEVER CALLED
+
+  → Result<IReadOnlyList<...>>.Failure(FetchError{"London"})
+
+OpenMeteoDataSource:  errors.Add(FetchError{"London"})
+
+ProcessingResult { Records = 14 (NY + Tokyo), Errors = [FetchError{"London"}] }
+
+PipelineSummary { TotalRecordsWritten=14, HasErrors=true }
+
+Program.cs: return 1  (exit code 1 = partial failure)
+```
+
+---
+
+### 16.15.7 — Design patterns used and where to find them
+
+| Pattern | Where | What it enables |
+|---|---|---|
+| **Railway Oriented Programming** | `Result<T>`, `Bind`, `ProcessLocationAsync` | Errors are values, compose safely, no hidden exceptions |
+| **Strategy** | `IWeatherDataSource` + all implementations | Add a source without changing the coordinator |
+| **Repository / Adapter** | `IWeatherApiClient` + `OpenMeteoApiClient` | Switch data source without changing business logic |
+| **Options Pattern** | `PipelineOptions`, `IOptions<T>` | Strongly-typed config, validated at startup |
+| **Dependency Injection** | `ServiceRegistration`, constructor injection everywhere | Testability, loose coupling |
+| **Template Method** | `IResponseParser<TRaw>` → `IDataTransformer<TRaw>` pipeline per source | Per-source variation within a fixed skeleton |
+| **Test Seam** | `MockHttpMessageHandler`, NSubstitute `IWeatherApiClient` | Replace only the external boundary |
+| **Queue-based Stub** | `MockHttpMessageHandler` | Deterministic response sequences for retry testing |
+
+---
+
+### 16.15.8 — How the exercise requirements are covered
+
+| Requirement | Where it lives |
+|---|---|
+| Fetch 7-day forecast from a real public API | `OpenMeteoApiClient` → `api.open-meteo.com/v1/forecast?forecast_days=7` |
+| Multiple city locations | `appsettings.json Locations[]`, `Task.WhenAll` in `OpenMeteoDataSource` |
+| Normalize data to a unified schema | `NormalizedWeatherRecord`, `OpenMeteoTransformer` |
+| Write to a structured file format | `TabDelimitedFileWriter` → `.tsv` with header |
+| Configurable via a config file | `appsettings.json` + `PipelineOptions` (Options pattern) |
+| Error handling with structured output | `Result<T>`, `PipelineError` hierarchy, `PipelineSummary.HasErrors` |
+| Unit tests | 29 unit tests across 5 test classes |
+| Integration tests | 3 end-to-end tests with real DI graph |
+| Bonus: HTTP retry / resilience | `AddStandardResilienceHandler()` on the named HttpClient |
+| Bonus: config-driven field mapping | `FieldMappings[]` in config (documentation registry) |
+| Bonus: multiple source extensibility | `IWeatherDataSource` + DI enumerable injection |
+| Exercise spec discrepancy caught | `wind_speed_10m_max` (correct) vs `windspeed_10m_max` (exercise typo) |
+| Second spec discrepancy caught | `uv_index_max` missing from exercise URL but listed in table — added |
+
+---
+
 > **End of Checkpoint Document**  
 > Re-read Section 1 at the start of each session. When ready to implement, proceed to Section 16.12 Build Order.  
 > **10 approaches analyzed. Winner: Approach 1 — Clean Architecture (4 projects: Core + Application + Infrastructure + Console) with Result<T> from Approach 8.**  
