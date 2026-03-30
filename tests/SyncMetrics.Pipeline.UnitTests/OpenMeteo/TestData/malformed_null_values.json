@@ -1,0 +1,13 @@
+{
+  "latitude": 40.7128,
+  "longitude": -74.006,
+  "timezone": "America/New_York",
+  "daily": {
+    "time": [ "2026-03-29", "2026-03-30" ],
+    "temperature_2m_max": [ 12.5, null ],
+    "temperature_2m_min": [ 5.2, null ],
+    "precipitation_sum": [ 0.0, null ],
+    "wind_speed_10m_max": [ 18.5, null ],
+    "uv_index_max": [ 3.2, null ]
+  }
+}
