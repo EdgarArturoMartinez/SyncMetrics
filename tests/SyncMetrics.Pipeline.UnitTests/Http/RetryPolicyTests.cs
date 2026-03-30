@@ -126,6 +126,29 @@ public sealed class RetryPolicyTests
         mockHandler.CallCount.Should().Be(4, "1 original request + 3 retries = 4 total HTTP calls");
     }
 
+    // ── HTTP timeout (TaskCanceledException without user cancellation) ─────────
+
+    [Fact]
+    public async Task FetchAsync_HttpTimeout_ReturnsFetchError()
+    {
+        // A TaskCanceledException thrown by HttpClient when the timeout expires
+        // (NOT user cancellation) should be caught as a transient failure.
+        // OpenMeteoApiClient catches HttpRequestException; the timeout surfaces
+        // as a TaskCanceledException with a non-canceled token — verify it's handled.
+        var timeoutHandler = new TimeoutHttpMessageHandler();
+
+        await using var provider = BuildProvider(timeoutHandler);
+        var apiClient = new OpenMeteoApiClient(
+            provider.GetRequiredService<IHttpClientFactory>());
+
+        // Act — CancellationToken.None means the caller did NOT cancel
+        var result = await apiClient.FetchAsync(NewYork, CancellationToken.None);
+
+        // Assert — the timeout should surface as a FetchError, not crash the pipeline
+        result.IsFailure.Should().BeTrue("HTTP timeout should produce a FetchError");
+        result.Error.Should().BeOfType<FetchError>();
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -133,7 +156,7 @@ public sealed class RetryPolicyTests
     /// given mock handler and configured with zero-delay retry so tests are fast.
     /// The retry count (3) and permanent-vs-transient classification mirror production.
     /// </summary>
-    private static ServiceProvider BuildProvider(MockHttpMessageHandler mockHandler)
+    private static ServiceProvider BuildProvider(HttpMessageHandler mockHandler)
     {
         var services = new ServiceCollection();
 
@@ -215,5 +238,21 @@ internal sealed class MockHttpMessageHandler : HttpMessageHandler
                 "Add more responses to the queue or reduce the expected call count.");
 
         return Task.FromResult(_responses.Dequeue());
+    }
+}
+
+/// <summary>
+/// A handler that always throws TaskCanceledException to simulate HTTP client timeouts.
+/// When HttpClient.Timeout expires, .NET throws TaskCanceledException with an inner
+/// TimeoutException — this is distinct from user cancellation.
+/// </summary>
+internal sealed class TimeoutHttpMessageHandler : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        throw new TaskCanceledException(
+            "The request was canceled due to the configured HttpClient.Timeout.",
+            new TimeoutException("A task was canceled."));
     }
 }

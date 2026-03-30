@@ -128,6 +128,34 @@ public sealed class TabDelimitedWriterTests : IDisposable
         content.Should().NotContain("15,3", "comma decimal separator indicates locale bug");
     }
 
+    // ── Structural round-trip validation ──────────────────────────────────────
+
+    [Fact]
+    public async Task WriteAsync_OutputIsStructurallyValidTsv_AllRowsHaveCorrectFieldCount()
+    {
+        // Proves the writer produces parseable TSV — every data row has the same number
+        // of tab-separated fields as the header. A missing tab would silently shift columns
+        // in downstream parsers, corrupting the dataset.
+        var records = new[]
+        {
+            MakeRecord(),
+            MakeRecordWithNullMeasurements(),
+        };
+
+        var result = await _sut.WriteAsync(records, CancellationToken.None);
+
+        var lines = await File.ReadAllLinesAsync(result.Value!);
+        var headerFieldCount = lines[0].Split('\t').Length;
+
+        // Every data row must have exactly as many fields as the header
+        for (var i = 1; i < lines.Length; i++)
+        {
+            var fields = lines[i].Split('\t');
+            fields.Should().HaveCount(headerFieldCount,
+                $"data row {i} must have {headerFieldCount} tab-separated fields, same as the header");
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static NormalizedWeatherRecord MakeRecord() => new()

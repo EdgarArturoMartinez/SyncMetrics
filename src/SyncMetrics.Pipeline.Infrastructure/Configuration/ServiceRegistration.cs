@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using SyncMetrics.Pipeline.Application;
 using SyncMetrics.Pipeline.Core.Interfaces;
 using SyncMetrics.Pipeline.Infrastructure.OpenMeteo;
@@ -21,6 +22,10 @@ public static class ServiceRegistration
         // Bind strongly-typed configuration from appsettings.json
         services.Configure<PipelineOptions>(
             configuration.GetSection(PipelineOptions.SectionName));
+
+        // Validate configuration at startup — catches bad coordinates, empty names, invalid paths
+        services.AddSingleton<IValidateOptions<PipelineOptions>, PipelineOptionsValidator>();
+        services.AddOptionsWithValidateOnStart<PipelineOptions>();
 
         // Phase 4 — HTTP client with resilience pipeline
         services.AddHttpClient("OpenMeteo", client =>

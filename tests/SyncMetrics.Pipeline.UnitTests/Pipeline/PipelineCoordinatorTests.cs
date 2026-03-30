@@ -163,6 +163,127 @@ public sealed class PipelineCoordinatorTests
         summary.TotalDuration.Should().BeGreaterThan(TimeSpan.Zero);
     }
 
+    // ── Cancellation ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RunAsync_CancellationRequested_ThrowsOperationCanceledException()
+    {
+        // When the caller signals cancellation (e.g., Ctrl+C), the coordinator must
+        // propagate the OperationCanceledException — not swallow it into a summary.
+        var cts = new CancellationTokenSource();
+
+        var mockSource = Substitute.For<IWeatherDataSource>();
+        mockSource.SourceName.Returns("OpenMeteo");
+        mockSource.ProcessAsync(Arg.Any<IEnumerable<LocationConfig>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var token = callInfo.ArgAt<CancellationToken>(1);
+                token.ThrowIfCancellationRequested();
+                return Task.FromResult(new ProcessingResult
+                {
+                    SourceName = "OpenMeteo",
+                    Records = Array.Empty<NormalizedWeatherRecord>(),
+                    Errors = Array.Empty<PipelineError>(),
+                    Duration = TimeSpan.Zero,
+                    LocationsAttempted = 0,
+                    LocationsSucceeded = 0,
+                });
+            });
+
+        var mockWriter = Substitute.For<IOutputWriter>();
+        var coordinator = BuildCoordinator(mockSource, mockWriter);
+
+        // Cancel before RunAsync starts
+        cts.Cancel();
+
+        // Act & Assert
+        var act = () => coordinator.RunAsync(SingleSourceLocations(), cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // ── All-fail scenarios ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RunAsync_AllLocationsFail_SummaryContainsAllErrors()
+    {
+        // When every location in every source fails, the summary must surface all
+        // errors — not just the first — so operators can diagnose multi-point outages.
+        var errors = new PipelineError[]
+        {
+            new FetchError("Timeout", "New York", 503),
+            new FetchError("DNS failure", "London", null),
+            new FetchError("Connection refused", "Tokyo", null),
+        };
+
+        var mockSource = Substitute.For<IWeatherDataSource>();
+        mockSource.SourceName.Returns("OpenMeteo");
+        mockSource.ProcessAsync(Arg.Any<IEnumerable<LocationConfig>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new ProcessingResult
+            {
+                SourceName = "OpenMeteo",
+                Records = Array.Empty<NormalizedWeatherRecord>(),
+                Errors = errors,
+                Duration = TimeSpan.FromMilliseconds(50),
+                LocationsAttempted = 3,
+                LocationsSucceeded = 0,
+            }));
+
+        var mockWriter = Substitute.For<IOutputWriter>();
+        var coordinator = BuildCoordinator(mockSource, mockWriter);
+
+        var locations = new Dictionary<string, IReadOnlyList<LocationConfig>>
+        {
+            ["OpenMeteo"] = new[]
+            {
+                NewYork,
+                new LocationConfig { Name = "London", Latitude = 51.5074, Longitude = -0.1278 },
+                new LocationConfig { Name = "Tokyo", Latitude = 35.6762, Longitude = 139.6503 },
+            },
+        };
+
+        // Act
+        var summary = await coordinator.RunAsync(locations, CancellationToken.None);
+
+        // Assert
+        summary.TotalRecordsWritten.Should().Be(0);
+        summary.HasErrors.Should().BeTrue();
+        summary.AllErrors.Should().HaveCount(3, "all three location errors must surface");
+        summary.OutputFilePath.Should().BeNull("no file should be written when zero records exist");
+
+        // Writer should never be called when there are zero records
+        #pragma warning disable CS4014
+        mockWriter.DidNotReceive().WriteAsync(
+            Arg.Any<IReadOnlyList<NormalizedWeatherRecord>>(),
+            Arg.Any<CancellationToken>());
+        #pragma warning restore CS4014
+    }
+
+    // ── Edge case: empty location list ────────────────────────────────────────
+
+    [Fact]
+    public async Task RunAsync_SourceRegisteredButNoLocationsConfigured_ProducesEmptySummary()
+    {
+        // If a source is registered in DI but its name has no matching entry
+        // in the sourceLocations map, the coordinator passes an empty array.
+        // This must not crash — it should produce zero records, zero errors.
+        var mockSource = BuildMockSource("OpenMeteo",
+            records: Array.Empty<NormalizedWeatherRecord>());
+
+        var mockWriter = Substitute.For<IOutputWriter>();
+        var coordinator = BuildCoordinator(mockSource, mockWriter);
+
+        // Empty map — no locations for any source
+        var emptyLocations = new Dictionary<string, IReadOnlyList<LocationConfig>>();
+
+        // Act
+        var summary = await coordinator.RunAsync(emptyLocations, CancellationToken.None);
+
+        // Assert
+        summary.TotalRecordsWritten.Should().Be(0);
+        summary.HasErrors.Should().BeFalse();
+        summary.OutputFilePath.Should().BeNull();
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static PipelineCoordinator BuildCoordinator(
