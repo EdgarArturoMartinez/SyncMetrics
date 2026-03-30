@@ -26,6 +26,7 @@ public class SourceOptions
     public string BaseUrl { get; set; } = string.Empty;
     public int TimeoutSeconds { get; set; } = 30;
     public int RetryCount { get; set; } = 3;
+    public int MaxConcurrentRequests { get; set; } = 10;
     public List<LocationConfig> Locations { get; set; } = new();
     public List<FieldMapping> FieldMappings { get; set; } = new();
 }
