@@ -44,3 +44,9 @@ output/*.tsv
 
 # Docker
 .docker/
+
+# Personal/planning files — not part of the deliverable
+Arthur_Checkpoint.md
+Arthur_Spanish_Checkpoint.md
+Docs/CV_PlainText2026.txt
+Docs/Ejercicio_Staff_Engineer_Español.md
