@@ -1,0 +1,58 @@
+{
+  "nearest_area": [
+    {
+      "latitude": "41.894",
+      "longitude": "-87.626"
+    }
+  ],
+  "weather": [
+    {
+      "date": "2026-03-30",
+      "maxtempC": "23",
+      "mintempC": "7",
+      "uvIndex": "6",
+      "hourly": [
+        { "precipMM": "0.0", "windspeedKmph": "18" },
+        { "precipMM": "0.0", "windspeedKmph": "17" },
+        { "precipMM": "0.0", "windspeedKmph": "14" },
+        { "precipMM": "0.0", "windspeedKmph": "17" },
+        { "precipMM": "0.0", "windspeedKmph": "19" },
+        { "precipMM": "0.0", "windspeedKmph": "22" },
+        { "precipMM": "0.5", "windspeedKmph": "22" },
+        { "precipMM": "0.0", "windspeedKmph": "22" }
+      ]
+    },
+    {
+      "date": "2026-03-31",
+      "maxtempC": "17",
+      "mintempC": "3",
+      "uvIndex": "3",
+      "hourly": [
+        { "precipMM": "4.0", "windspeedKmph": "29" },
+        { "precipMM": "0.8", "windspeedKmph": "27" },
+        { "precipMM": "0.0", "windspeedKmph": "26" },
+        { "precipMM": "0.0", "windspeedKmph": "22" },
+        { "precipMM": "0.0", "windspeedKmph": "27" },
+        { "precipMM": "0.0", "windspeedKmph": "23" },
+        { "precipMM": "0.0", "windspeedKmph": "24" },
+        { "precipMM": "2.6", "windspeedKmph": "27" }
+      ]
+    },
+    {
+      "date": "2026-04-01",
+      "maxtempC": "4",
+      "mintempC": "2",
+      "uvIndex": "1",
+      "hourly": [
+        { "precipMM": "0.7", "windspeedKmph": "21" },
+        { "precipMM": "0.0", "windspeedKmph": "26" },
+        { "precipMM": "1.2", "windspeedKmph": "29" },
+        { "precipMM": "6.4", "windspeedKmph": "28" },
+        { "precipMM": "2.0", "windspeedKmph": "23" },
+        { "precipMM": "0.9", "windspeedKmph": "25" },
+        { "precipMM": "0.3", "windspeedKmph": "23" },
+        { "precipMM": "0.0", "windspeedKmph": "24" }
+      ]
+    }
+  ]
+}

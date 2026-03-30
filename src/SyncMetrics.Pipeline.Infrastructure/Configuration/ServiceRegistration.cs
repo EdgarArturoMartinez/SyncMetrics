@@ -4,6 +4,7 @@ using SyncMetrics.Pipeline.Application;
 using SyncMetrics.Pipeline.Core.Interfaces;
 using SyncMetrics.Pipeline.Infrastructure.OpenMeteo;
 using SyncMetrics.Pipeline.Infrastructure.Output;
+using SyncMetrics.Pipeline.Infrastructure.WttrIn;
 
 namespace SyncMetrics.Pipeline.Infrastructure.Configuration;
 
@@ -37,6 +38,23 @@ public static class ServiceRegistration
         services.AddSingleton<IResponseParser<OpenMeteoApiResponse>, OpenMeteoResponseParser>();
         services.AddSingleton<IDataTransformer<OpenMeteoApiResponse>, OpenMeteoTransformer>();
         services.AddSingleton<IWeatherDataSource, OpenMeteoDataSource>();
+
+        // wttr.in data source — free, no API key, completely different JSON shape.
+        // WttrInApiClient is registered as concrete type (not IWeatherApiClient) to avoid
+        // DI collision. With 3+ sources, keyed services would be the next evolution.
+        services.AddHttpClient("WttrIn", client =>
+        {
+            client.BaseAddress = new Uri(
+                configuration.GetValue<string>("Pipeline:Sources:1:BaseUrl")
+                ?? "https://wttr.in/");
+            client.Timeout = TimeSpan.FromSeconds(
+                configuration.GetValue<int>("Pipeline:Sources:1:TimeoutSeconds", 30));
+        }).AddStandardResilienceHandler();
+
+        services.AddSingleton<WttrInApiClient>();
+        services.AddSingleton<IResponseParser<WttrInApiResponse>, WttrInResponseParser>();
+        services.AddSingleton<IDataTransformer<WttrInApiResponse>, WttrInTransformer>();
+        services.AddSingleton<IWeatherDataSource, WttrInDataSource>();
 
         // Phase 5 — Output writer
         services.AddSingleton<IOutputWriter, TabDelimitedFileWriter>();

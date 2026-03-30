@@ -1,0 +1,20 @@
+{
+  "nearest_area": [
+    {
+      "latitude": "41.894",
+      "longitude": "-87.626"
+    }
+  ],
+  "weather": [
+    {
+      "date": "2026-03-30",
+      "maxtempC": "23",
+      "mintempC": "7",
+      "uvIndex": "6",
+      "hourly": [
+        { "precipMM": null, "windspeedKmph": null },
+        { "precipMM": null, "windspeedKmph": null }
+      ]
+    }
+  ]
+}
