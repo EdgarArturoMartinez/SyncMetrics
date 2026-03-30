@@ -1,0 +1,13 @@
+{
+  "latitude": 40.710335,
+  "longitude": -74.00594,
+  "timezone": "America/New_York",
+  "daily": {
+    "time": [],
+    "temperature_2m_max": [],
+    "temperature_2m_min": [],
+    "precipitation_sum": [],
+    "wind_speed_10m_max": [],
+    "uv_index_max": []
+  }
+}

@@ -1,0 +1,29 @@
+# Git
+.git/
+.github/
+.gitignore
+
+# Documentation — not needed in Docker image
+*.md
+!README.md
+Docs/
+
+# Personal/planning files
+Arthur_Checkpoint.md
+Arthur_Spanish_Checkpoint.md
+
+# Output data (generated at runtime, not at build time)
+output/
+
+# IDE and OS artifacts
+.vs/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+
+# Docker meta
+.docker/
+.dockerignore
+Dockerfile
