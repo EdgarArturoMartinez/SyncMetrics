@@ -49,6 +49,14 @@ public sealed class TabDelimitedFileWriter : IOutputWriter
             var fileName = _options.OutputFilePattern.Replace(
                 "{timestamp}",
                 DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture));
+
+            if (Path.IsPathRooted(fileName) || fileName.Contains("..", StringComparison.Ordinal))
+            {
+                return Result<string>.Failure(new OutputError(
+                    "OutputFilePattern must be a relative filename without path traversal.",
+                    FilePath: fileName));
+            }
+
             filePath = Path.Combine(_options.OutputDirectory, fileName);
 
             // UTF-8 without BOM — the universal default for data interchange files
