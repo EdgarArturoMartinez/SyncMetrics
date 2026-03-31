@@ -61,15 +61,6 @@ public sealed class OpenMeteoApiClient : IWeatherApiClient
         {
             throw; // Respect caller cancellation — do not swallow
         }
-        catch (TaskCanceledException ex)
-        {
-            // HTTP timeout — TaskCanceledException with inner TimeoutException.
-            // The caller did NOT cancel, so this is a transient failure, not a signal to stop.
-            return Result<string>.Failure(new FetchError(
-                $"HTTP request timed out for {location.Name}: {ex.Message}",
-                LocationName: location.Name,
-                Url: url));
-        }
         catch (HttpRequestException ex)
         {
             return Result<string>.Failure(new FetchError(
