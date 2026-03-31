@@ -21,3 +21,5 @@ GitHub Copilot and Claude were used as development tools throughout this exercis
 ## Deliberate Non-Use
 
 Architecture decisions — approach selection, interface design, the `Result<T>` error model, the four-project layer structure — were made without AI. These require understanding the evaluation criteria, judging proportional complexity for the scope, and recognizing which patterns communicate intent to an expert reviewer. AI generates code that works; architecture decisions require judgment about what the reader will value.
+
+- **Fail-fast over silent defaults**: The original `ServiceRegistration.cs` had a hardcoded fallback URL via null-coalescing (`?? "https://..."`) — a DRY violation where the URL existed in both `appsettings.json` and code. I replaced the fallback with `throw new InvalidOperationException` so a missing config value crashes at startup with a clear message instead of silently using a potentially stale default. A Staff Engineer should surface configuration errors immediately, not hide them behind fallbacks that mask deployment mistakes.
