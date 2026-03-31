@@ -873,11 +873,8 @@ SyncMetrics.WeatherPipeline/
 │   │   │   └── OpenMeteoDataSource.cs               # IWeatherDataSource → composites client+parser+transformer
 │   │   ├── Output/
 │   │   │   └── TabDelimitedFileWriter.cs            # IOutputWriter → writes .tsv with header + rows
-│   │   ├── Configuration/
-│   │   │   ├── FieldMappingConfig.cs                # Config-driven field mapping model (bonus feature)
-│   │   │   └── ServiceRegistration.cs               # DI extension: AddPipelineServices()
-│   │   └── Http/
-│   │       └── ResilienceConfiguration.cs           # Retry + timeout config for HttpClient
+│   │   └── Configuration/
+│   │       └── ServiceRegistration.cs               # DI extension: AddPipelineServices() + resilience config
 │   │
 │   └── SyncMetrics.Pipeline.Console/                # Entry point — depends on all layers via DI
 │       ├── Program.cs                               # Host setup, DI, config binding, run pipeline
@@ -1449,11 +1446,8 @@ SyncMetrics.WeatherPipeline/
 │   │   │   └── OpenMeteoDataSource.cs
 │   │   ├── Output/
 │   │   │   └── TabDelimitedFileWriter.cs
-│   │   ├── Configuration/
-│   │   │   ├── FieldMappingConfig.cs
-│   │   │   └── ServiceRegistration.cs
-│   │   └── Http/
-│   │       └── ResilienceConfiguration.cs
+│   │   └── Configuration/
+│   │       └── ServiceRegistration.cs               # Includes resilience config via AddStandardResilienceHandler()
 │   │
 │   └── SyncMetrics.Pipeline.Console/                # References: Core, Application, Infrastructure
 │       ├── SyncMetrics.Pipeline.Console.csproj
@@ -3785,6 +3779,344 @@ Program.cs: return 1  (exit code 1 = partial failure)
 | Bonus: multiple source extensibility | `IWeatherDataSource` + DI enumerable injection |
 | Exercise spec discrepancy caught | `wind_speed_10m_max` (correct) vs `windspeed_10m_max` (exercise typo) |
 | Second spec discrepancy caught | `uv_index_max` missing from exercise URL but listed in table — added |
+
+---
+
+## 18. Resilience Strategy — Deep Dive
+
+### Where It Lives in the Codebase
+
+The entire resilience configuration is **one line of code** in [ServiceRegistration.cs](src/SyncMetrics.Pipeline.Infrastructure/Configuration/ServiceRegistration.cs):
+
+```csharp
+services.AddHttpClient("OpenMeteo", client =>
+{
+    client.BaseAddress = new Uri("https://api.open-meteo.com/v1/forecast");
+    client.Timeout = TimeSpan.FromSeconds(30);
+})
+.AddStandardResilienceHandler();  // ← This single line activates 5 layers of protection
+```
+
+**Package**: `Microsoft.Extensions.Http.Resilience` 8.0.* (installed in `SyncMetrics.Pipeline.Infrastructure.csproj`)
+
+### What `.AddStandardResilienceHandler()` Gives You — The 5 Layers
+
+`.AddStandardResilienceHandler()` is Microsoft's .NET 8 native resilience stack built on top of Polly v8. That one method call registers a **pipeline of 5 resilience strategies** that wrap every HTTP request made through the named `HttpClient`:
+
+```
+HTTP Request from OpenMeteoApiClient
+        │
+        ▼
+┌─ 1. RATE LIMITER ──────────────────────┐
+│  Controls concurrent request volume     │
+│  Prevents overwhelming the API          │
+└─────────────────────────────────────────┘
+        │
+        ▼
+┌─ 2. TOTAL REQUEST TIMEOUT ─────────────┐
+│  30s max for the ENTIRE operation       │
+│  (including all retries combined)       │
+└─────────────────────────────────────────┘
+        │
+        ▼
+┌─ 3. RETRY ──────────────────────────────┐
+│  Exponential backoff with jitter:       │
+│    Attempt 1 → fails                    │
+│    Wait ~1s + jitter → Attempt 2        │
+│    Wait ~2s + jitter → Attempt 3        │
+│    Wait ~4s + jitter → Attempt 4        │
+│  Max 3 retries (4 total attempts)       │
+└─────────────────────────────────────────┘
+        │
+        ▼
+┌─ 4. CIRCUIT BREAKER ───────────────────┐
+│  If failure rate exceeds threshold:     │
+│  "Open" circuit → fail fast for 30s    │
+│  Stop sending doomed requests           │
+│  After 30s → "half-open" → test one    │
+└─────────────────────────────────────────┘
+        │
+        ▼
+┌─ 5. ATTEMPT TIMEOUT ───────────────────┐
+│  10s max per individual attempt         │
+│  Each retry gets its own timeout        │
+└─────────────────────────────────────────┘
+        │
+        ▼
+   Open-Meteo API (or wttr.in)
+```
+
+### What Triggers Retry vs What Does Not
+
+| Scenario | Retried? | Why |
+|----------|----------|-----|
+| HTTP 500 (Internal Server Error) | **Yes** | Transient — server glitch, may recover |
+| HTTP 502/503 (Bad Gateway / Unavailable) | **Yes** | Transient — server overloaded |
+| HTTP 408 (Request Timeout) | **Yes** | Transient — server took too long |
+| HTTP 429 (Too Many Requests) | **Yes** | Rate limited — wait and retry |
+| `HttpRequestException` (network error) | **Yes** | DNS failure, connection refused — may recover |
+| `TaskCanceledException` (timeout) | **Yes** | Attempt timed out — try again |
+| HTTP 400 (Bad Request) | **No** | Client error — our URL/params are wrong, retrying sends the same bad request |
+| HTTP 404 (Not Found) | **No** | Endpoint doesn't exist — permanent |
+| HTTP 401/403 (Auth errors) | **No** | Credentials wrong — retrying won't fix |
+| JSON parsing failure | **No** | Response arrived but is malformed — retry would get the same bad JSON |
+
+### Why Exponential Backoff with Jitter
+
+**Exponential backoff** means each retry waits longer than the last:
+- Attempt 2: wait ~1 second
+- Attempt 3: wait ~2 seconds  
+- Attempt 4: wait ~4 seconds
+
+This avoids hammering a struggling server — giving it progressively more time to recover.
+
+**Jitter** adds a random component (±0-500ms) to each wait. This prevents the **thundering herd problem**: if the pipeline fetches 3 locations concurrently and all 3 fail at the same time, without jitter they would ALL retry at exactly the same intervals — hitting the API with 3 simultaneous requests again. Jitter randomizes the timing so retries are staggered.
+
+### The Circuit Breaker — "Stop Beating a Dead Horse"
+
+If Open-Meteo returns 5 consecutive failures, the circuit breaker **opens**:
+- For the next 30 seconds, all requests to Open-Meteo **fail immediately** without even making the HTTP call
+- This protects both the pipeline (no wasted time) and the API (no unnecessary load)
+- After 30 seconds, the breaker enters "half-open" state — lets ONE request through as a test
+- If that request succeeds → circuit closes, normal operation resumes
+- If it fails → circuit opens again for another 30 seconds
+
+### How This Connects to Result<T>
+
+The resilience pipeline and `Result<T>` are **complementary layers**:
+
+```
+Layer 1: Polly/Resilience (Infrastructure)
+  └── Handles transient HTTP failures AUTOMATICALLY
+  └── Retries, circuit breaking, timeouts — transparent to your code
+
+Layer 2: Result<T> (Core/Application)
+  └── Handles PERMANENT failures EXPLICITLY
+  └── Malformed JSON, missing fields, invalid data → typed errors in PipelineSummary
+```
+
+If Polly exhausts all retries and the request still fails, `OpenMeteoApiClient.FetchAsync()` catches the final exception and returns `Result<T>.Failure(new FetchError(...))`. The error flows through the pipeline as a **value**, not an exception — collected in the `PipelineSummary` alongside successful results.
+
+### Configuration in appsettings.json
+
+```json
+{
+  "Pipeline": {
+    "Sources": [
+      {
+        "Name": "OpenMeteo",
+        "TimeoutSeconds": 30,
+        "RetryCount": 3
+      }
+    ]
+  }
+}
+```
+
+The `TimeoutSeconds: 30` is applied as `client.Timeout` on the `HttpClient`. The `RetryCount: 3` documents the intent; `AddStandardResilienceHandler()` uses its own defaults (which happen to be 3 retries). For custom retry counts per source, the configuration can be overridden:
+
+```csharp
+.AddStandardResilienceHandler(options =>
+{
+    options.Retry.MaxRetryAttempts = config.RetryCount;
+});
+```
+
+### Interview Answer — Resilience
+
+> *"I used Microsoft.Extensions.Http.Resilience — .NET 8's native resilience stack built on Polly v8. One line of code — `AddStandardResilienceHandler()` — gives me five layers: rate limiting, total timeout, retry with exponential backoff and jitter, circuit breaker, and per-attempt timeout. The defaults are production-grade. Transient failures like 5xx or network errors get retried automatically; permanent failures like 400 or malformed JSON pass through to my Result<T> error handling. The circuit breaker prevents hammering a dead API — if too many requests fail, it short-circuits for 30 seconds. If I needed custom behavior per source, I can override the configuration per named HttpClient."*
+
+### Why Not Raw Polly v8?
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| `AddStandardResilienceHandler()` | One line, production defaults, Microsoft-maintained, integrates with `IHttpClientFactory` | Less control over individual policies |
+| Raw Polly v8 | Full control, custom policy composition | ~50 lines of boilerplate, must wire into `IHttpClientFactory` manually, easy to misconfigure |
+| No resilience | Simplest | Any transient failure kills the pipeline. Unacceptable for data integration |
+
+For a take-home exercise, `AddStandardResilienceHandler()` is the right call — maximum resilience for minimum complexity. In production with custom requirements (different retry counts per source, custom circuit breaker thresholds), you'd move to explicit Polly v8 policy composition.
+
+---
+
+## 19. Error Strategy — Complete Catalog & Live Demos
+
+> **Purpose**: This section documents every error type the pipeline tracks, where each originates in the codebase, how they flow through `Result<T>.Bind()`, and how to force each one for a live demo during the interview.
+
+### 19.1 The 4 Error Types (PipelineError Hierarchy)
+
+The base type `PipelineError` (a C# `record`) has 4 subtypes, each carrying contextual information specific to the stage that failed:
+
+| # | Error Type | When It Fires | Context Captured | Source File |
+|---|-----------|--------------|-----------------|-------------|
+| 1 | **`FetchError`** | HTTP call fails (404, 400, 500, timeout, DNS failure, network down) | `StatusCode`, `Url`, `LocationName` | `OpenMeteoApiClient.cs` |
+| 2 | **`ParseError`** | JSON is invalid, structural validation fails (`daily` missing, arrays mismatched, API error response) | `Field`, `RawContent` (truncated to 200 chars) | `OpenMeteoResponseParser.cs` |
+| 3 | **`TransformError`** | Date string unparseable, data inconsistency during normalization | `Field`, `RecordIndex` | `OpenMeteoTransformer.cs` |
+| 4 | **`OutputError`** | Cannot write the TSV file (disk full, permission denied, invalid path) | `FilePath` | `TabDelimitedFileWriter.cs` |
+
+**Key design decisions**:
+- All 4 are `record` types — immutable, value equality, concise syntax
+- Each carries **stage-specific** context (not a generic `string Message`) — enables actionable diagnostics
+- `RawContent` is truncated to 200 chars to prevent log flooding from large JSON payloads
+- `LocationName` links every error to its geographic origin for multi-location debugging
+
+### 19.2 Railway-Oriented Error Flow — The Bind Chain
+
+In `OpenMeteoDataSource.ProcessLocationAsync()`, the three pipeline stages are chained via `Result<T>.Bind()`:
+
+```csharp
+return fetchResult
+    .Bind(json => _parser.Parse(json))              // if Fetch fails → Parse NEVER executes
+    .Bind(response => _transformer.Transform(response, location));  // if Parse fails → Transform NEVER executes
+```
+
+**What this means**:
+- If `FetchError` occurs → the parser and transformer are completely skipped
+- If `ParseError` occurs → the transformer is skipped
+- If `TransformError` occurs → only the transform stage failed; fetch and parse succeeded
+- No `try/catch` anywhere — errors propagate as **values** through the `Result<T>` monad
+
+### 19.3 Error Aggregation — Partial Failure Handling
+
+The pipeline does **NOT** stop on the first error. In `OpenMeteoDataSource.ProcessAsync()`:
+
+```csharp
+foreach (var result in results)
+{
+    if (result.IsSuccess)
+    {
+        records.AddRange(result.Value);    // successful locations contribute records
+        locationsSucceeded++;
+    }
+    else
+    {
+        errors.Add(result.Error);          // failed locations contribute errors
+    }
+}
+```
+
+Then `PipelineCoordinator.PrintSummary()` displays every error with its type, location, and message:
+```
+ERRORS:
+  [FetchError] Chicago — Open-Meteo API returned HTTP 404 for Chicago.
+  [ParseError] Auckland — Response missing 'daily' object.
+```
+
+**Exit code**: `return summary.HasErrors ? 1 : 0;` — CI/CD pipelines detect failures automatically.
+
+### 19.4 Live Demo Recipes — How to Force Each Error
+
+#### Demo 1: FetchError — Break the API URL
+
+**What to change** in `appsettings.json` line 9:
+```json
+"BaseUrl": "https://api.open-meteo.com/v1/BROKEN_URL"
+```
+
+**What happens**:
+1. Polly detects transient SSL error → retries with exponential backoff (visible in logs: `Attempt: '0'` → `OnRetry` → `Attempt: '1'`)
+2. Retry succeeds connecting → gets HTTP 404 (not retried — 404 is not transient)
+3. `OpenMeteoApiClient` creates `FetchError` with `StatusCode: 404`
+4. `Bind` skips parser and transformer entirely
+
+**Output**:
+```
+Sources processed:    1 (OpenMeteo)
+Locations attempted:  3
+Locations succeeded:  0
+Locations failed:     3
+Records written:      0
+Output file:          (none)
+ERRORS:
+  [FetchError] Chicago — Open-Meteo API returned HTTP 404 for Chicago.
+  [FetchError] Auckland — Open-Meteo API returned HTTP 404 for Auckland.
+  [FetchError] Bali — Open-Meteo API returned HTTP 404 for Bali.
+Exit code: 1
+```
+
+**Interview value**: Shows resilience layer (Polly retry visible), typed errors, zero silent failures, exit code signaling.
+
+#### Demo 2: FetchError (Partial) — One Bad Location Among Good Ones
+
+**What to change**: Replace one location with impossible coordinates:
+```json
+{ "Name": "InvalidCity", "Latitude": 999.0, "Longitude": 999.0 }
+```
+
+**Output**:
+```
+Locations succeeded:  2      ← Chicago and Auckland processed correctly
+Locations failed:     1      ← only InvalidCity failed
+Records written:      14     ← 2 locations × 7 days
+  [FetchError] InvalidCity — Open-Meteo API returned HTTP 400 for InvalidCity.
+Exit code: 1
+```
+
+**Interview value**: **This is the most powerful demo.** It shows:
+- The pipeline does NOT stop on first failure — partial success
+- Good data is still written to the output file
+- The failed location is reported with its specific error
+- Exit code 1 signals CI/CD that something went wrong
+
+#### Demo 3: ParseError — Proven by Unit Tests
+
+These errors are validated by 5 dedicated unit tests with real JSON fixture files:
+
+| Test Name | Fixture File | What It Validates |
+|-----------|-------------|-------------------|
+| `Parse_ApiErrorResponse_ReturnsParseErrorWithReason` | `error_response.json` | API returns `{"error":true,"reason":"..."}` |
+| `Parse_MissingDailyObject_ReturnsParseErrorWithDailyField` | `malformed_missing_daily.json` | JSON valid but `daily` key missing |
+| `Parse_MismatchedArrayLengths_ReturnsParseErrorNamingOffendingField` | `malformed_mismatched_arrays.json` | `time` array has 7 elements, `temperature_2m_max` has 5 |
+| `Parse_EmptyTimeArray_ReturnsParseError` | `malformed_empty_arrays.json` | `daily.time` is `[]` |
+| `Parse_InvalidJson_ReturnsParseErrorWithInvalidJsonMessage` | (inline broken JSON) | `"{not valid json"` |
+
+Each test asserts:
+- `result.IsFailure` is `true`
+- `result.Error` is specifically a `ParseError` (not generic)
+- The `Field` property names the offending field (e.g., `"daily"`, `"temperature_2m_max"`)
+- The `RawContent` contains a truncated snippet of the original JSON
+
+#### Demo 4: TransformError — Proven by Unit Test
+
+Test: `Transform_UnparsableDateString_ReturnsTransformErrorWithRecordIndex`
+
+If the API returns `"not-a-date"` in the `time` array, the transformer returns:
+```csharp
+TransformError(
+    "Cannot parse date 'not-a-date' at index 0 for Chicago.",
+    LocationName: "Chicago",
+    Field: "time",
+    RecordIndex: 0)
+```
+
+The `RecordIndex` tells you exactly which day in the 7-day forecast had the bad data.
+
+#### Demo 5: OutputError — Invalid Output Path
+
+**What to change** in `appsettings.json` line 3:
+```json
+"OutputDirectory": "Z:\\nonexistent\\path"
+```
+
+The `TabDelimitedFileWriter` cannot create the file → `OutputError` with the target `FilePath`.
+
+### 19.5 Complete Test Coverage for Error Handling
+
+The 32-test suite includes error-specific tests across all layers:
+
+| Layer | Test Class | Error Tests | What They Prove |
+|-------|-----------|-------------|-----------------|
+| **Parsing** | `OpenMeteoResponseParserTests` | 5 of 10 tests | Every malformed JSON variant produces a specific `ParseError` |
+| **Transform** | `OpenMeteoTransformerTests` | 1 of 6 tests | Unparseable dates produce `TransformError` with record index |
+| **Pipeline** | `PipelineCoordinatorTests` | 2 of 5 tests | Errors aggregate in summary; output writer failure handled |
+| **Retry** | `RetryPolicyTests` | 3 of 3 tests | Transient → retry; permanent → no retry; exhausted → `FetchError` |
+| **E2E** | `EndToEndPipelineTests` | 1 of 3 tests | API error response → zero records + error surfaced in summary |
+| **Output** | `TabDelimitedWriterTests` | 0 of 5 tests | (Output tests focus on formatting, not error paths) |
+
+**Total: 12 of 32 tests (37.5%) specifically validate error handling.**
+
+### 19.6 Interview Answer — Error Strategy
+
+> *"The pipeline tracks four categories of errors — FetchError for HTTP failures, ParseError for JSON structural issues, TransformError for data inconsistencies during normalization, and OutputError for file writing failures. Each is a typed C# record carrying stage-specific context: FetchError knows the HTTP status code and URL, ParseError knows which JSON field failed and includes a truncated raw snippet, TransformError knows the record index and field name. Errors flow through Result<T>.Bind() — if fetching fails, parsing never runs. The pipeline coordinator aggregates all errors across all locations and sources, writes successful records to the output file, and prints a structured summary showing exactly what failed and why. The process exits with code 1 if any errors occurred, so CI/CD catches it. I can demo this live by changing one line in appsettings.json — breaking the URL shows FetchError with Polly retry visible in the logs, changing one location to invalid coordinates shows partial failure handling where 2 of 3 locations succeed."*
 
 ---
 
