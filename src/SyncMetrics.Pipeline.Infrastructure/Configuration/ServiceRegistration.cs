@@ -27,7 +27,9 @@ public static class ServiceRegistration
         {
             client.BaseAddress = new Uri(
                 configuration.GetValue<string>("Pipeline:Sources:0:BaseUrl")
-                ?? "https://api.open-meteo.com/v1/forecast");
+                ?? throw new InvalidOperationException(
+                    "Pipeline:Sources:0:BaseUrl is required in configuration. " +
+                    "Ensure appsettings.json contains a valid BaseUrl for the OpenMeteo source."));
             client.Timeout = TimeSpan.FromSeconds(
                 configuration.GetValue<int>("Pipeline:Sources:0:TimeoutSeconds", 30));
         }).AddStandardResilienceHandler();
