@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Pipeline (Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/SyncMetrics.Pipeline.Console/bin/Debug/net8.0/SyncMetrics.Pipeline.Console.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/SyncMetrics.Pipeline.Console",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    }
+  ]
+}

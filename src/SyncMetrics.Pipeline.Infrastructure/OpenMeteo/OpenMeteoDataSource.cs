@@ -1,16 +1,13 @@
 using System.Diagnostics;
-using Microsoft.Extensions.Options;
 using SyncMetrics.Pipeline.Core;
 using SyncMetrics.Pipeline.Core.Interfaces;
 using SyncMetrics.Pipeline.Core.Models;
-using SyncMetrics.Pipeline.Infrastructure.Configuration;
 
 namespace SyncMetrics.Pipeline.Infrastructure.OpenMeteo;
 
 /// <summary>
 /// Composite orchestrator: wires client → parser → transformer for the Open-Meteo source.
-/// Fetches all locations concurrently with Task.WhenAll, throttled by a SemaphoreSlim
-/// to prevent overwhelming the API when many locations are configured.
+/// Fetches all locations concurrently with Task.WhenAll, then aggregates results.
 /// Implements the Strategy pattern — the pipeline coordinator only sees IWeatherDataSource.
 /// </summary>
 public sealed class OpenMeteoDataSource : IWeatherDataSource
@@ -18,23 +15,15 @@ public sealed class OpenMeteoDataSource : IWeatherDataSource
     private readonly IWeatherApiClient _apiClient;
     private readonly IResponseParser<OpenMeteoApiResponse> _parser;
     private readonly IDataTransformer<OpenMeteoApiResponse> _transformer;
-    private readonly int _maxConcurrentRequests;
 
     public OpenMeteoDataSource(
         IWeatherApiClient apiClient,
         IResponseParser<OpenMeteoApiResponse> parser,
-        IDataTransformer<OpenMeteoApiResponse> transformer,
-        IOptions<PipelineOptions> options)
+        IDataTransformer<OpenMeteoApiResponse> transformer)
     {
         _apiClient = apiClient;
         _parser = parser;
         _transformer = transformer;
-
-        var sourceConfig = options.Value.Sources
-            .FirstOrDefault(s => s.Name == SourceName);
-        _maxConcurrentRequests = sourceConfig?.MaxConcurrentRequests > 0
-            ? sourceConfig.MaxConcurrentRequests
-            : 10;
     }
 
     public string SourceName => "OpenMeteo";
@@ -45,20 +34,8 @@ public sealed class OpenMeteoDataSource : IWeatherDataSource
         var stopwatch = Stopwatch.StartNew();
         var locationList = locations.ToList();
 
-        // Concurrent fetch — throttled by SemaphoreSlim to avoid overwhelming the API
-        using var semaphore = new SemaphoreSlim(_maxConcurrentRequests);
-        var tasks = locationList.Select(async loc =>
-        {
-            await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                return await ProcessLocationAsync(loc, cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                semaphore.Release();
-            }
-        });
+        // Concurrent fetch — Task.WhenAll fires all HTTP requests simultaneously
+        var tasks = locationList.Select(loc => ProcessLocationAsync(loc, cancellationToken));
         var results = await Task.WhenAll(tasks).ConfigureAwait(false);
 
         var records = new List<NormalizedWeatherRecord>();
